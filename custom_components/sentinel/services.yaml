@@ -1,0 +1,19 @@
+set_mode:
+  name: Changer de mode
+  description: Active un mode Sentinel par son nom ou son identifiant.
+  fields:
+    mode:
+      name: Mode
+      description: Nom (par exemple « Absence ») ou identifiant du mode.
+      required: true
+      example: "Absence"
+      selector:
+        text:
+
+acknowledge:
+  name: Acquitter
+  description: Coupe les notifications répétées en cours, jusqu'au prochain déclenchement.
+
+reset_counters:
+  name: Réinitialiser les compteurs
+  description: Remet à zéro le compteur cumulé et le dernier déclenchement.

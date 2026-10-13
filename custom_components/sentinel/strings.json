@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sentinel",
+        "description": "Ajoute Sentinel. Les pièces, capteurs et modes se règlent ensuite dans le panneau Sentinel de la barre latérale."
+      }
+    },
+    "abort": {
+      "already_configured": "Sentinel est déjà configuré."
+    }
+  }
+}
