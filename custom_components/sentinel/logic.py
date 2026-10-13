@@ -39,6 +39,18 @@ ON_STATES = frozenset(
 # Les entry delay ne s'appliquent jamais à ces types (sécurité des personnes).
 SAFETY_TYPES = frozenset({"smoke", "leak"})
 
+# Évènements d'un mode auxquels on peut rattacher une notification et des actions.
+# enter : le mode vient d'être activé ; clear : une entité redevient normale.
+EVENTS = ("enter", "info", "warning", "critical", "clear")
+ZONE_EVENTS = ("info", "warning", "critical", "clear")
+
+TYPE_LABELS = {
+    "door": "Porte", "window": "Fenêtre", "bay": "Baie vitrée", "garage": "Porte de garage",
+    "gate": "Portail", "wardrobe": "Armoire", "cabinet": "Placard / buffet",
+    "fridge": "Réfrigérateur", "safe": "Coffre-fort", "medicine": "Armoire à pharmacie",
+    "motion": "Mouvement", "presence": "Présence", "smoke": "Fumée", "leak": "Fuite d'eau",
+}
+
 # Libellés d'état utilisés dans les messages ({state}).
 STATE_TEXT = {
     "door": ("Fermée", "Ouverte"),
@@ -147,6 +159,10 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     cfg["cfg"]["latch_zones"] = bool(cfg["cfg"].get("latch_zones"))
     for mode in cfg["modes"]:
         mode.setdefault("def", "off")
+        if not isinstance(mode.get("actions"), dict):
+            mode["actions"] = {}
+        if not isinstance(mode.get("zones"), dict):
+            mode["zones"] = {}
         for bag in ("types", "rooms", "ents"):
             if not isinstance(mode.get(bag), dict):
                 mode[bag] = {}
@@ -272,17 +288,85 @@ def state_text(ent: dict[str, Any], on: bool) -> str:
 _TPL = re.compile(r"\{(\w+)\}")
 
 
-def fill_template(template: str, ent: dict[str, Any], room: dict[str, Any] | None,
-                  mode: dict[str, Any], level: str, on: bool) -> str:
-    values = {
+def template_values(ent: dict[str, Any] | None, room: dict[str, Any] | None,
+                    mode: dict[str, Any], level: str, on: bool,
+                    floor: str = "", when: Any = None) -> dict[str, str]:
+    """Variables disponibles dans les messages et les données d'action."""
+    ent = ent or {}
+    return {
         "name": ent.get("name", ""),
         "zone": room.get("name", "—") if room else "—",
-        "state": state_text(ent, on),
+        "floor": floor,
+        "type": TYPE_LABELS.get(ent.get("type"), ent.get("type") or ""),
+        "state": state_text(ent, on) if ent else "",
         "level": level,
         "mode": mode.get("name", ""),
         "entity": ent.get("entity", ""),
+        "time": when.strftime("%H:%M") if when else "",
+        "date": when.strftime("%d/%m/%Y") if when else "",
     }
+
+
+def fill_template(template: str, ent: dict[str, Any], room: dict[str, Any] | None,
+                  mode: dict[str, Any], level: str, on: bool,
+                  floor: str = "", when: Any = None) -> str:
+    values = template_values(ent, room, mode, level, on, floor, when)
     return _TPL.sub(lambda m: str(values.get(m.group(1), m.group(0))), template or "")
+
+
+def fill_data(obj: Any, values: dict[str, str]) -> Any:
+    """Applique les variables {name}… à toutes les chaînes d'une structure."""
+    if isinstance(obj, str):
+        return _TPL.sub(lambda m: str(values.get(m.group(1), m.group(0))), obj)
+    if isinstance(obj, list):
+        return [fill_data(v, values) for v in obj]
+    if isinstance(obj, dict):
+        return {k: fill_data(v, values) for k, v in obj.items()}
+    return obj
+
+
+def reactions_for(mode: dict[str, Any], room: dict[str, Any] | None,
+                  event: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Notifications et actions d'un évènement.
+
+    Le réglage de la zone remplace celui du mode, sauf si la zone demande de
+    s'y ajouter (`zones[id].add.notify[event]` / `.add.actions[event]`)."""
+    mn = (mode.get("notify") or {}).get(event)
+    ma = (mode.get("actions") or {}).get(event)
+    notifies = [mn] if isinstance(mn, dict) and mn else []
+    actions = [a for a in ma if isinstance(a, dict)] if isinstance(ma, list) else []
+    zone = (mode.get("zones") or {}).get(room.get("id")) if room else None
+    if isinstance(zone, dict) and event in ZONE_EVENTS:
+        add = zone.get("add") if isinstance(zone.get("add"), dict) else {}
+        zn = zone.get("notify") if isinstance(zone.get("notify"), dict) else {}
+        za = zone.get("actions") if isinstance(zone.get("actions"), dict) else {}
+        if isinstance(zn.get(event), dict):
+            keep = notifies if (add.get("notify") or {}).get(event) else []
+            notifies = keep + [zn[event]]
+        if isinstance(za.get(event), list):
+            keep = actions if (add.get("actions") or {}).get(event) else []
+            actions = keep + [a for a in za[event] if isinstance(a, dict)]
+    return notifies, actions
+
+
+def action_call(action: dict[str, Any], values: dict[str, str]) -> tuple[str, str, dict[str, Any]] | None:
+    """(domaine, service, données) d'une action, ou None si elle est incomplète."""
+    service = str(action.get("service") or "").strip()
+    domain, _, name = service.partition(".")
+    if not domain or not name:
+        return None
+    data = action.get("data")
+    data = fill_data(data, values) if isinstance(data, dict) else {}
+    target = action.get("entity_id")
+    if isinstance(target, str):
+        ids = [i.strip() for i in target.split(",") if i.strip()]
+    elif isinstance(target, list):
+        ids = [str(i).strip() for i in target if str(i).strip()]
+    else:
+        ids = []
+    if ids and "entity_id" not in data:
+        data["entity_id"] = ids if len(ids) > 1 else ids[0]
+    return domain, name, data
 
 
 def slugify(text: str) -> str:

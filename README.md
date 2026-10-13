@@ -14,7 +14,8 @@ qu'elle prend quand elle se déclenche : `off`, `info`, `warning` ou `critical`.
 - **Modèle 3D** de la maison dans un panneau de la barre latérale, avec l'état en direct de chaque capteur.
 - **Modes libres** : crée, renomme, duplique tes modes (Désarmé, Présence, Absence, Nuit, Vacances...).
 - **Niveau par entité, zone ou type** : priorité entité > zone > type > défaut.
-- **Notifications par niveau et par mode** : service `notify.*`, message avec variables, rappel périodique.
+- **Notifications par niveau et par mode**, ou propres à une zone : service `notify.*`, message avec variables, rappel périodique, notification à l'activation du mode et au retour à la normale.
+- **Actions** : à chaque évènement d'un mode (mode activé, info, warning, critical, retour à la normale), appelle des services Home Assistant (lancer un script, allumer ou éteindre une entité…), au niveau du mode ou propres à une zone.
 - **Délais** : temporisation par entité, délai d'entrée et de sortie par mode.
 - **Entités Home Assistant** pour tes automatisations (statut, compteurs, mode, alarme, zones).
 
@@ -44,7 +45,7 @@ Un élément **Sentinel** apparaît dans la barre latérale (réservé aux admin
    - `binary_sensor.*` (contact, mouvement, présence, fumée, fuite),
    - ou `cover.*`, `lock.*`, `switch.*`, `input_boolean.*`.
    L'état `on`, `open`, `opening`, `unlocked`, `detected`, `triggered`, `wet` compte comme déclenché. Coche *Inverser* pour les capteurs à logique inverse.
-4. Onglet **Modes** : choisis le niveau de chaque entité par mode, règle les notifications (service `notify.mobile_app_...`).
+4. Onglet **Modes** : choisis le niveau de chaque entité par mode, règle les notifications (service `notify.mobile_app_...`) et les actions. Le sélecteur « Portée » bascule entre le mode entier et une zone : une zone peut avoir ses propres notifications et actions, qui remplacent celles du mode ou s'y ajoutent (case à cocher), le reste suit le mode. L'encart « Aide » liste les variables `{name}`, `{zone}`, `{floor}`, `{type}`, `{state}`, `{level}`, `{mode}`, `{entity}`, `{time}`, `{date}` ; un clic les insère dans le champ en cours.
 5. En haut, sélectionne le mode actif. Tout est sauvegardé automatiquement dans Home Assistant.
 
 ## Entités créées

@@ -31,7 +31,11 @@ from .logic import (
     entity_key,
     exposed_items,
     fill_template,
+    fill_data,
     find_mode,
+    action_call,
+    reactions_for,
+    template_values,
     normalize_config,
     resolve_level,
     room_of,
@@ -40,6 +44,10 @@ from .logic import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _fill(template: str, values: dict[str, str]) -> str:
+    return fill_data(str(template or ""), values)
 
 
 class SentinelEngine:
@@ -208,7 +216,7 @@ class SentinelEngine:
             if previous is not None:
                 del self._triggered[ent_id]
                 if not silent:
-                    self._on_clear(ent, room, mode)
+                    self._on_clear(ent, room, mode, previous)
             return
 
         now = dt_util.utcnow()
@@ -257,6 +265,45 @@ class SentinelEngine:
         )
         del self.journal[JOURNAL_SIZE:]
 
+    # -- réactions : notification + actions, au niveau du mode ou propres à une zone --
+    def _floor_name(self, room: dict[str, Any] | None) -> str:
+        if not room:
+            return ""
+        for floor in self.config.get("floors", []):
+            if floor.get("id") == room.get("floor"):
+                return str(floor.get("name", ""))
+        return ""
+
+    def _values(self, ent: dict[str, Any] | None, room: dict[str, Any] | None,
+                mode: dict[str, Any], level: str, on: bool = True) -> dict[str, str]:
+        return template_values(ent, room, mode, level, on, self._floor_name(room), dt_util.now())
+
+    def _react(self, event: str, ent: dict[str, Any] | None, room: dict[str, Any] | None,
+               mode: dict[str, Any], level: str, on: bool = True
+               ) -> tuple[dict[str, str] | None, list[dict[str, Any]]]:
+        """Envoie les notifications et lance les actions de l'évènement.
+
+        Retourne (note pour le journal, configurations de notification actives)."""
+        notifies, actions = reactions_for(mode, room, event)
+        values = self._values(ent, room, mode, level, on)
+        sent: list[dict[str, str]] = []
+        for cfg in notifies:
+            if cfg.get("on") and cfg.get("target"):
+                message = _fill(cfg.get("msg", ""), values)
+                sent.append({"target": cfg["target"], "msg": message})
+                self.hass.async_create_task(self._send(cfg["target"], message, mode))
+        for action in actions:
+            call = action_call(action, values)
+            if call is None:
+                continue
+            domain, service, data = call
+            self._log(f"Action : {domain}.{service}" + (f" ({data['entity_id']})" if isinstance(data.get("entity_id"), str) else ""))
+            self.hass.async_create_task(self._call(domain, service, data))
+        note = None
+        if sent:
+            note = {"target": ", ".join(dict.fromkeys(n["target"] for n in sent)), "msg": sent[0]["msg"]}
+        return note, [c for c in notifies if c.get("on") and c.get("target")]
+
     def _on_trigger(self, ent: dict[str, Any], room: dict[str, Any] | None,
                     mode: dict[str, Any], level: str) -> None:
         zone = room.get("name", "") if room else ""
@@ -266,15 +313,10 @@ class SentinelEngine:
             "name": ent.get("name", ""), "level": level, "zone": zone,
             "time": dt_util.now().strftime("%H:%M:%S"), "entity_id": ent.get("entity"),
         }
-        notify_cfg = (mode.get("notify") or {}).get(level) or {}
-        note = None
-        if notify_cfg.get("on") and notify_cfg.get("target"):
-            message = fill_template(notify_cfg.get("msg", ""), ent, room, mode, level, True)
-            note = {"target": notify_cfg["target"], "msg": message}
-            self.hass.async_create_task(self._send(notify_cfg["target"], message, mode))
-            repeat = int(notify_cfg.get("repeat") or 0)
-            if repeat > 0:
-                self._start_repeat(ent, room, mode, level, repeat)
+        note, active = self._react(level, ent, room, mode, level)
+        repeats = [int(c.get("repeat") or 0) for c in active if int(c.get("repeat") or 0) > 0]
+        if repeats:
+            self._start_repeat(ent, room, mode, level, min(repeats))
         label = f"{ent.get('name', '')} ({zone})" if zone else ent.get("name", "")
         self._log(f"{label} : déclenché", level, note)
         self.hass.bus.async_fire(
@@ -284,10 +326,11 @@ class SentinelEngine:
         )
 
     def _on_clear(self, ent: dict[str, Any], room: dict[str, Any] | None,
-                  mode: dict[str, Any]) -> None:
+                  mode: dict[str, Any], level: str = "") -> None:
         zone = room.get("name", "") if room else ""
         label = f"{ent.get('name', '')} ({zone})" if zone else ent.get("name", "")
-        self._log(f"{label} : retour à la normale")
+        note, _ = self._react("clear", ent, room, mode, level, on=False)
+        self._log(f"{label} : retour à la normale", "", note)
         self.hass.bus.async_fire(
             EVENT_CLEARED,
             {"entity_id": ent.get("entity"), "sentinel_id": ent["id"],
@@ -302,15 +345,27 @@ class SentinelEngine:
         def _again(_now: datetime) -> None:
             if self._triggered.get(ent_id) != level or ent_id in self._acked:
                 return
-            cfg = (current_mode(self.config).get("notify") or {}).get(level) or {}
-            if not (cfg.get("on") and cfg.get("target")):
-                return
-            message = fill_template(cfg.get("msg", ""), ent, room, mode, level, True)
-            self.hass.async_create_task(self._send(cfg["target"], message, mode))
+            current = current_mode(self.config)
+            notifies, _actions = reactions_for(current, room, level)
+            values = self._values(ent, room, current, level)
+            for cfg in notifies:
+                if int(cfg.get("repeat") or 0) > 0 and cfg.get("on") and cfg.get("target"):
+                    self.hass.async_create_task(
+                        self._send(cfg["target"], _fill(cfg.get("msg", ""), values), mode)
+                    )
 
         self._repeat_timers[ent_id] = async_track_time_interval(
             self.hass, _again, timedelta(minutes=minutes)
         )
+
+    async def _call(self, domain: str, service: str, data: dict[str, Any]) -> None:
+        if not self.hass.services.has_service(domain, service):
+            _LOGGER.warning("Service d'action introuvable : %s.%s", domain, service)
+            return
+        try:
+            await self.hass.services.async_call(domain, service, data, blocking=False)
+        except Exception:  # noqa: BLE001 - une action ratée ne doit rien casser
+            _LOGGER.exception("Échec de l'action %s.%s", domain, service)
 
     async def _send(self, target: str, message: str, mode: dict[str, Any]) -> None:
         domain, _, service = target.partition(".")
@@ -346,6 +401,9 @@ class SentinelEngine:
         self._triggered.clear()
         self._acked.clear()
         self._log(f"Mode « {mode.get('name', '')} » activé")
+        note, _cfg = self._react("enter", None, None, mode, "")
+        if note:
+            self._log(f"Notification : {note['target']}", "", note)
         self._save_soon()
         self._evaluate_all(silent=False)
         if grace:

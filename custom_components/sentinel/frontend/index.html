@@ -1,3 +1,6 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sentinel</title>
 <style>
 /* Layout: sidebar (étages, pièces, capteurs) + scène 3D / éditeur de plan + journal en bas */
@@ -44,6 +47,7 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px
 .seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:0 0 0 1px var(--line)}
 .seg.armed button[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);box-shadow:none}
 .spacer{flex:1}
+.armrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;font-weight:600;border:1px solid var(--line);background:var(--surface2)}
 .pill i{width:9px;height:9px;border-radius:50%;background:var(--ok)}
 .pill.warn i{background:var(--warn)} .pill.alarm{border-color:var(--alarm);color:var(--alarm)} .pill.alarm i{background:var(--alarm);animation:blink 1s infinite}
@@ -291,6 +295,30 @@ pre.yaml{background:var(--surface2);border:1px solid var(--line);border-radius:8
 .nblock input[type=checkbox]{width:auto}
 .nblock .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .nblock .prev{margin:0;font-size:12px;font-family:var(--font-mono);color:var(--muted)}
+/* réactions : portée, aide, actions */
+.scopebar{display:flex;flex-direction:column;gap:6px;margin:0 0 14px}
+.scopebar label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);max-width:420px}
+.scopebar select{background:var(--surface2);border:1px solid var(--line);border-radius:7px;padding:8px;color:var(--fg);width:100%}
+.scopebar p{margin:0;font-size:12.5px}
+details.help{border:1px solid var(--line);border-radius:10px;background:var(--surface2);padding:10px 14px;margin:0 0 14px}
+details.help summary{cursor:pointer;font-weight:600}
+details.help p{margin:8px 0;color:var(--muted);font-size:13px;max-width:75ch}
+.vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin:10px 0}
+.vchip{display:flex;flex-direction:column;gap:2px;text-align:left;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);min-width:0}
+.vchip:hover{border-color:var(--accent)}
+.vchip b{font-family:var(--font-mono);color:var(--accent);font-size:13px}
+.vchip span{color:var(--muted);font-size:12px}
+.vchip em{font-style:normal;font-family:var(--font-mono);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nblock .ev{margin:0;font-size:12px;color:var(--muted)}
+.nblock.inh{border-style:dashed;background:var(--surface2)}
+.nblock input[aria-invalid="true"]{border-color:var(--alarm)}
+.nblock input:disabled{opacity:.6}
+.nblock .ovr{font-size:13px}
+.act{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px;align-items:end;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--surface2)}
+.act .wide{grid-column:1/3}
+.act .btn{grid-column:3;grid-row:1/3;align-self:end}
+.addrow{display:flex;gap:8px;flex-wrap:wrap}
+.inhlist{margin:0;padding-left:18px;font-size:12px;color:var(--muted)}
 .sgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:640px}
 .sgrid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
 .sgrid .wide{grid-column:1/-1}
@@ -298,26 +326,69 @@ pre.yaml{background:var(--surface2);border:1px solid var(--line);border-radius:8
 .sgrid input[type=color]{padding:2px;height:34px}
 .actions{display:flex;gap:8px;margin-top:20px;flex-wrap:wrap}
 @media (max-width:860px){
-  .mlayout{grid-template-columns:1fr}
-  .mlist{position:static;flex-direction:row;overflow-x:auto}
-  .mitem{min-width:200px}
+  .mlayout{grid-template-columns:minmax(0,1fr)}
+  .mlist{position:static;flex-direction:row;overflow-x:auto;padding-bottom:4px}
+  .mitem{min-width:190px;width:auto;flex:none}
   .lrow{flex-wrap:wrap}
   .nblock .two,.sgrid{grid-template-columns:1fr}
+  .act{grid-template-columns:minmax(0,1fr)}
+  .act .wide,.act .btn{grid-column:1;grid-row:auto}
+  .mbody{padding:12px}
+  .mdhead{padding:12px 12px 0}
+  .mtabs{padding:8px 8px 0}
+  #config{padding:14px 12px 32px}
 }
 @media (max-width:860px){
-  html,body{height:auto}
+  html,body{height:auto;overflow-x:hidden}
   .app{height:auto;display:block}
+  header{gap:8px 12px;padding:8px 12px}
+  .brand{order:1;flex:1;min-width:0}
+  .pill{order:2}
+  #ackBtn{order:2}
+  #viewTabs{order:3;width:100%;max-width:100%;overflow-x:auto;scrollbar-width:none}
+  #viewTabs::-webkit-scrollbar{display:none}
+  header>.spacer{display:none}
+  .armrow{order:4;flex:1 1 100%;min-width:0}
+  .armrow .seg{flex:1;min-width:0;overflow-x:auto;scrollbar-width:none}
   .main{display:flex;flex-direction:column}
   .stage{display:flex;flex-direction:column;order:-1}
-  .view{height:64vh;min-height:380px}
+  .view{height:58vh;min-height:340px}
   .side{border-right:0;overflow:visible}
   .log{max-height:220px}
-  #editor{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr) auto}
+  #editor{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto}
   .insp{border-left:0;border-top:1px solid var(--line)}
   .view.editing{height:auto;min-height:0}
   .view.editing #editor,.view.editing #config{position:static}
   .view.editing .plan{max-height:60vh}
   .ov.br{display:none}
+  .ov.tl{max-width:calc(100% - 16px)}
+  .tb{gap:6px;padding:8px}
+  .tb select{max-width:46vw}
+  .cfg-head p{max-width:none}
+}
+@media (max-width:640px){
+  /* tableau des entités HA : une carte par ligne */
+  .hat,.hat tbody,.hat tr,.hat td{display:block;width:100%}
+  .hat thead{display:none}
+  .hat tr{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:10px;background:var(--surface)}
+  .hat td{border:0;padding:3px 0}
+  .hat .ds{max-width:none}
+  .hat .eid input{min-width:0}
+}
+@media (max-width:480px){
+  body{font-size:15px}
+  .brand img{height:26px}
+  .seg button{padding:7px 10px}
+  .vgrid{grid-template-columns:1fr 1fr}
+  .vchip span{display:none}
+}
+@media (pointer:coarse){
+  .btn,.chip,.seg button,.mtabs button,.seg4 button{min-height:40px}
+  .seg4 button{min-width:44px}
+  .mid{r:.3}
+  #plan{touch-action:pan-x pan-y pinch-zoom}
+  #plan [data-kind]{touch-action:none}
+  #plan.msel{touch-action:none}
 }
 @media (prefers-reduced-motion:reduce){.pill.alarm i{animation:none}}
 </style>
@@ -336,7 +407,7 @@ pre.yaml{background:var(--surface2);border:1px solid var(--line);border-radius:8
       <button data-view="json" aria-pressed="false">Export</button>
     </div>
     <div class="spacer"></div>
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <div class="armrow">
       <span class="lbl">Mode</span>
       <div class="seg armed" id="armTabs" role="group" aria-label="Mode d'alarme"></div>
     </div>
@@ -400,6 +471,12 @@ var API=(function(){
       var ha=window.parent.document.querySelector('home-assistant');
       if(ha)ha.dispatchEvent(new CustomEvent('hass-more-info',{detail:{entityId:entityId},bubbles:true,composed:true}));
     }catch(e){}
+  };
+  a.targetIds=function(){
+    if(!a.hass)return [];
+    return Object.keys(a.hass.states).filter(function(id){
+      return !/^(sensor|binary_sensor|person|zone|sun|weather|update|device_tracker|event|tts|stt|conversation)\./.test(id);
+    }).sort();
   };
   a.entityIds=function(){
     if(!a.hass)return [];
@@ -714,7 +791,9 @@ function counts(){
   return c;
 }
 function fillTpl(t,e,m,lv){
-  var r=roomOf(e),map={name:e.name,zone:r?r.name:'—',state:stateText(e),level:lv,mode:m.name,entity:e.entity||defEntity(e)};
+  var r=e&&roomOf(e),fl=r&&floorOf(r.floor),
+    map={name:e?e.name:'',zone:r?r.name:'—',floor:fl?fl.name:'',type:e?TYPES[e.type].label:'',state:e?stateText(e):'',level:lv,
+      mode:m.name,entity:e?(e.entity||defEntity(e)):'',time:nowStr().slice(0,5),date:new Date().toLocaleDateString('fr-FR')};
   return String(t||'').replace(/\{(\w+)\}/g,function(_,k){return map[k]!==undefined?map[k]:'{'+k+'}'});
 }
 function logEvent(text,lv,note){
@@ -726,9 +805,10 @@ function logEvent(text,lv,note){
 function triggerNote(e){
   var m=curMode(),lv=levelInfo(e,m).level;
   if(!e.on||lv==='off')return {lv:'',note:null};
-  var n=(m.notify||{})[lv],r=roomOf(e);
+  var r=roomOf(e),rc=reactionFor(m,r,lv),on=rc.notifies.filter(function(n){return n.on});
   lastTrigger={name:e.name,level:lv,zone:r?r.name:'',time:nowStr()};
-  return {lv:lv,note:n&&n.on?{target:n.target||'notify.notify',msg:fillTpl(n.msg,e,m,lv)}:null};
+  rc.actions.forEach(function(a){logEvent('Action simulée : '+actionSummary(a),'')});
+  return {lv:lv,note:on.length?{target:on.map(function(n){return n.target||'notify.notify'}).join(', '),msg:fillTpl(on[0].msg,e,m,lv)}:null};
 }
 function describe(e){var r=roomOf(e);return e.name+(r?' ('+r.name+')':'')}
 function toggle(id){
@@ -1208,8 +1288,9 @@ function renderEditor(){
       '<button class="btn" data-act="addFurn">+ Meuble</button>'+
       '<select id="newType" aria-label="Type de capteur">'+SENSOR_KINDS.map(function(k){return '<option value="'+k+'">'+TYPES[k].label+'</option>'}).join('')+'</select>'+
       '<button class="btn" data-act="addEnt">+ Capteur</button>'+
+      '<button class="chip" data-act="toggleMulti" aria-pressed="'+!!ui.addMode+'" title="Les prochains clics ajoutent à la sélection ; tracer un cadre sur le fond sélectionne plusieurs éléments">Sélection multiple</button>'+
       '<span class="spacer"></span><button class="btn" data-act="reset">Réinitialiser l\'exemple</button></div>';
-  var svg='<div class="plan"><svg id="plan" width="'+d.W*S+'" height="'+d.H*S+'" viewBox="'+d.x0+' '+d.z0+' '+d.W+' '+d.H+'">'+
+  var svg='<div class="plan"><svg id="plan" class="'+(ui.addMode?'msel':'')+'" width="'+d.W*S+'" height="'+d.H*S+'" viewBox="'+d.x0+' '+d.z0+' '+d.W+' '+d.H+'">'+
     '<defs><pattern id="gp" width="1" height="1" patternUnits="userSpaceOnUse"><path class="gl" d="M1 0H0V1"/></pattern></defs>'+
     '<rect x="'+d.x0+'" y="'+d.z0+'" width="'+d.W+'" height="'+d.H+'" fill="url(#gp)"/>';
   model.rooms.filter(function(r){return r.floor!==fl}).forEach(function(r){
@@ -1401,7 +1482,7 @@ function bindEditor(){
   }
   ed.addEventListener('pointerdown',function(ev){
     if(!$('#plan')||!ev.target.closest||!ev.target.closest('#plan'))return;
-    var t=ev.target.closest('[data-kind]'),p=pos(ev),add=ev.shiftKey||ev.ctrlKey||ev.metaKey;
+    var t=ev.target.closest('[data-kind]'),p=pos(ev),add=ev.shiftKey||ev.ctrlKey||ev.metaKey||!!ui.addMode;
     if(!t||!$('#plan').contains(t)){ // fond du plan : cadre de sélection
       drag={kind:'marquee',p0:p,add:add,base:add?selKeys():[],moved:false};
       ui.marquee={x0:p.x,z0:p.z,x1:p.x,z1:p.z};
@@ -1666,6 +1747,8 @@ function bindEditor(){
         model.rooms=model.rooms.filter(function(x){return x.id!==rr.id});
       }else model.ents=model.ents.filter(function(x){return x.id!==ui.sel.id});
       ui.sel=null;ui.multi=[];
+    }else if(a==='toggleMulti'){
+      ui.addMode=!ui.addMode;
     }else if(a==='clearSel'){
       setSelection([]);
     }else if(a==='delMulti'&&groupMode()){
@@ -1879,17 +1962,154 @@ function levelsTab(m){
   });
   return h;
 }
-function notifTab(m){
-  var e0=model.ents[0],h='<p class="tabhint">Pour chaque niveau, choisis si une notification part, vers quel service Home Assistant, à quelle fréquence et avec quel message. Variables : {name} {zone} {state} {level} {mode} {entity}.</p>';
-  ['info','warning','critical'].forEach(function(lv){
-    var n=(m.notify&&m.notify[lv])||{},b=' data-mid="'+m.id+'" data-lv="'+lv+'"';
-    var prev=e0?fillTpl(n.msg,e0,m,lv):'';
-    h+='<fieldset class="nblock lv-'+lv+'"><legend><label class="chk"><input type="checkbox"'+b+' data-nf="on"'+(n.on?' checked':'')+'> Notifier en <b>'+LV_LABEL[lv]+'</b></label></legend>'+
-      '<div class="two"><label>Service<input class="mono"'+b+' data-nf="target" value="'+esc(n.target||'')+'" placeholder="notify.mobile_app_…"></label>'+
-      '<label>Répéter toutes les (min, 0 = jamais)<input type="number" min="0"'+b+' data-nf="repeat" value="'+(n.repeat||0)+'"></label></div>'+
-      '<label>Message<input'+b+' data-nf="msg" value="'+esc(n.msg||'')+'"></label>'+
-      '<p class="prev">Aperçu : '+esc(prev)+'</p></fieldset>';
+/* ---------- réactions d'un mode : notifications et actions, au niveau du mode ou propres à une zone ---------- */
+var EVENTS=[['enter','Mode activé'],['info','Info'],['warning','Warning'],['critical','Critical'],['clear','Retour à la normale']];
+var EVENT_HINT={enter:'Quand ce mode est activé.',info:'Une entité passe au niveau Info.',warning:'Une entité passe au niveau Warning.',
+  critical:'Une entité passe au niveau Critical.',clear:'Une entité déclenchée redevient normale.'};
+/* variables utilisables dans les messages et dans les données des actions */
+var VARS=[
+  ['name','Nom de l\'entité','Fenêtre salon'],
+  ['zone','Nom de la pièce ou de la zone','Salon'],
+  ['floor','Nom de l\'étage','Rez-de-chaussée'],
+  ['type','Type d\'entité','Fenêtre'],
+  ['state','État de l\'entité','Ouverte'],
+  ['level','Niveau atteint','critical'],
+  ['mode','Nom du mode actif','Absence'],
+  ['entity','Identifiant Home Assistant','binary_sensor.fenetre_salon'],
+  ['time','Heure (HH:MM)','14:32'],
+  ['date','Date (JJ/MM/AAAA)','12/05/2026']
+];
+var COMMON_SERVICES=['script.turn_on','homeassistant.turn_on','homeassistant.turn_off','light.turn_on','light.turn_off','switch.turn_on','switch.turn_off',
+  'scene.turn_on','input_boolean.turn_on','input_boolean.turn_off','automation.trigger','cover.close_cover','cover.open_cover','lock.lock','lock.unlock','siren.turn_on','siren.turn_off'];
+var ACTION_PRESETS=[['script','Lancer un script','script.turn_on'],['on','Allumer','homeassistant.turn_on'],['off','Éteindre','homeassistant.turn_off'],['free','Autre service','']];
+
+function reactScope(){
+  var z=ui.reactZone;
+  return z&&model.rooms.some(function(r){return r.id===z})?z:'';
+}
+function zoneBag(m,z,kind,create){
+  var zz=(m.zones||{})[z];
+  if(!zz){if(!create)return null;m.zones=m.zones||{};zz=m.zones[z]={}}
+  if(!zz[kind]){if(!create)return null;zz[kind]={}}
+  return zz[kind];
+}
+/* réglage effectif d'un évènement : zone si elle a le sien, sinon mode */
+function zoneAdds(m,z,kind,ev){var zz=(m.zones||{})[z];return !!(zz&&zz.add&&zz.add[kind]&&zz.add[kind][ev])}
+function reactionFor(m,room,ev){
+  var mn=m.notify&&m.notify[ev],ma=(m.actions&&m.actions[ev])||[];
+  var nots=mn&&Object.keys(mn).length?[mn]:[],acts=ma.slice(),z=room&&(m.zones||{})[room.id];
+  if(z&&ev!=='enter'){
+    if(z.notify&&z.notify[ev])nots=(zoneAdds(m,room.id,'notify',ev)?nots:[]).concat([z.notify[ev]]);
+    if(z.actions&&z.actions[ev])acts=(zoneAdds(m,room.id,'actions',ev)?acts:[]).concat(z.actions[ev]);
+  }
+  return {notifies:nots,actions:acts};
+}
+function sampleEnt(zone){
+  var l=zone?model.ents.filter(function(e){return roomOf(e)&&roomOf(e).id===zone}):[];
+  return l[0]||model.ents.find(function(e){return !TYPES[e.type].furniture&&e.room})||model.ents[0]||null;
+}
+function scopeSelect(m){
+  var z=reactScope(),o='<option value=""'+(z?'':' selected')+'>Tout le mode (par défaut)</option>';
+  model.floors.slice().sort(function(a,b){return b.level-a.level}).forEach(function(f){
+    var rs=model.rooms.filter(function(r){return r.floor===f.id});if(!rs.length)return;
+    o+='<optgroup label="'+esc(f.name)+'">'+rs.map(function(r){
+      var zz=(m.zones||{})[r.id],has=zz&&((zz.notify&&Object.keys(zz.notify).length)||(zz.actions&&Object.keys(zz.actions).length));
+      return '<option value="'+r.id+'"'+(z===r.id?' selected':'')+'>'+esc(r.name)+(has?' ●':'')+'</option>';
+    }).join('')+'</optgroup>';
   });
+  return '<div class="scopebar"><label>Portée<select id="reactZone">'+o+'</select></label>'+
+    '<p class="muted">'+(z?'Ces réglages ne valent que pour les entités de cette zone. Ce qui n\'est pas personnalisé suit le mode ; ce qui l\'est remplace celui du mode, ou s\'y ajoute si tu coches l\'option. ● : zone avec réglages propres.':'Réglages du mode, valables partout, sauf dans les zones qui ont les leurs.')+'</p></div>';
+}
+function helpCard(kind){
+  var e0=sampleEnt(reactScope()),r0=e0&&roomOf(e0),m=curMode();
+  var ex=e0?{name:e0.name,zone:r0?r0.name:'—',floor:(floorOf(e0.floor)||{}).name||'',type:TYPES[e0.type].label,state:TYPES[e0.type].on,level:'critical',mode:m.name,entity:e0.entity||defEntity(e0),time:nowStr().slice(0,5),date:new Date().toLocaleDateString('fr-FR')}:null;
+  var h='<details class="help"'+(ui.helpOpen===false?'':' open')+'><summary>Aide : variables et exemples</summary>'+
+    '<p>Les variables entre accolades sont remplacées au moment de l\'envoi. Clique sur une variable pour l\'insérer dans le champ que tu es en train de remplir.</p>'+
+    '<div class="vgrid">'+VARS.map(function(v){
+      return '<button class="vchip" data-ins="{'+v[0]+'}" title="Insérer {'+v[0]+'}"><b>{'+v[0]+'}</b><span>'+esc(v[1])+'</span><em>'+esc(ex?ex[v[0]]:v[2])+'</em></button>';
+    }).join('')+'</div>';
+  if(kind==='notif'){
+    h+='<p class="hint"><b>Exemple :</b> <span class="mono">⚠ {name} ({zone}) : {state} à {time}</span> donne « '+esc(ex?('⚠ '+ex.name+' ('+ex.zone+') : '+ex.state+' à '+ex.time):'⚠ Fenêtre salon (Salon) : Ouverte à 14:32')+' ».</p>'+
+      '<p class="hint"><b>Service :</b> le nom du service de notification de Home Assistant, par exemple <span class="mono">notify.mobile_app_mon_telephone</span> ou <span class="mono">notify.notify</span>. Tu les trouves dans Outils de développement › Actions, en cherchant « notify ».</p>'+
+      '<p class="hint"><b>Répéter :</b> renvoie le message toutes les N minutes tant que l\'entité reste déclenchée, jusqu\'à l\'acquittement.</p>';
+  }else{
+    h+='<p class="hint"><b>Service :</b> <span class="mono">domaine.service</span>. Lancer un script : <span class="mono">script.turn_on</span> avec l\'entité <span class="mono">script.ma_sirene</span>. Allumer ou éteindre n\'importe quelle entité : <span class="mono">homeassistant.turn_on</span> / <span class="mono">homeassistant.turn_off</span>.</p>'+
+      '<p class="hint"><b>Entité(s) :</b> une ou plusieurs entités séparées par des virgules, par exemple <span class="mono">light.entree, switch.sirene</span>.</p>'+
+      '<p class="hint"><b>Données :</b> facultatif, au format JSON. Les variables y sont remplacées. Exemple pour passer le message à un script : <span class="mono">{"variables": {"texte": "{name} : {state}"}}</span>.</p>';
+  }
+  return h+'</details>';
+}
+function notifBlock(m,ev,z){
+  var own=z?(zoneBag(m,z,'notify',false)||{})[ev]:null,inherit=z&&!own,
+      n=z?(own||(m.notify&&m.notify[ev])||{}):((m.notify&&m.notify[ev])||{});
+  var b=' data-mid="'+m.id+'" data-lv="'+ev+'"'+(z?' data-zone="'+z+'"':'')+(inherit?' disabled':'');
+  var lbl=EVENTS.filter(function(x){return x[0]===ev})[0][1];
+  var e0=sampleEnt(z),prev=n.msg?fillTpl(n.msg,ev==='enter'?null:e0,m,ev==='enter'?'':ev):'';
+  var h='<fieldset class="nblock lv-'+ev+(inherit?' inh':'')+'"><legend>'+
+    '<label class="chk"><input type="checkbox"'+b+' data-nf="on"'+(n.on?' checked':'')+'> Notifier : <b>'+esc(lbl)+'</b></label></legend>'+
+    '<p class="ev">'+esc(EVENT_HINT[ev])+'</p>';
+  if(z)h+='<label class="chk ovr"><input type="checkbox" data-ovr="notify" data-mid="'+m.id+'" data-lv="'+ev+'" data-zone="'+z+'"'+(own?' checked':'')+'> Réglage propre à cette zone'+(own?'':' <span class="muted">(suit le mode)</span>')+'</label>';
+  if(z&&own)h+='<label class="chk ovr"><input type="checkbox" data-addm="notify" data-mid="'+m.id+'" data-lv="'+ev+'" data-zone="'+z+'"'+(zoneAdds(m,z,'notify',ev)?' checked':'')+'> S\'ajoute à la notification du mode (au lieu de la remplacer)</label>';
+  h+='<div class="two"><label>Service<input class="mono"'+b+' data-nf="target" value="'+esc(n.target||'')+'" placeholder="notify.mobile_app_…" list="haNotify"></label>'+
+    (ev==='enter'||ev==='clear'?'':'<label>Répéter toutes les (min, 0 = jamais)<input type="number" min="0"'+b+' data-nf="repeat" value="'+(n.repeat||0)+'"></label>')+'</div>'+
+    '<label>Message<input'+b+' data-nf="msg" value="'+esc(n.msg||'')+'" placeholder="{name} ({zone}) : {state}"></label>'+
+    '<p class="prev">Aperçu : '+esc(prev||'—')+'</p></fieldset>';
+  return h;
+}
+function serviceDatalists(){
+  var svc={};COMMON_SERVICES.forEach(function(s){svc[s]=1});
+  var notif={};
+  try{
+    var S=API.hass&&API.hass.services;
+    if(S)Object.keys(S).forEach(function(d){
+      Object.keys(S[d]).forEach(function(s){
+        if(d==='notify')notif[d+'.'+s]=1;
+        else if(/^(script|scene|light|switch|input_boolean|cover|lock|siren|automation|homeassistant|climate|fan|media_player|vacuum|alarm_control_panel|button|input_button|camera)$/.test(d))svc[d+'.'+s]=1;
+      });
+    });
+  }catch(e){}
+  return '<datalist id="haServices">'+Object.keys(svc).sort().map(function(s){return '<option value="'+esc(s)+'">'}).join('')+'</datalist>'+
+    '<datalist id="haNotify">'+Object.keys(notif).sort().map(function(s){return '<option value="'+esc(s)+'">'}).join('')+'</datalist>'+
+    '<datalist id="haTargets">'+API.targetIds().map(function(id){return '<option value="'+esc(id)+'">'}).join('')+'</datalist>';
+}
+function actionSummary(a){
+  var t=a.entity_id;if(Array.isArray(t))t=t.join(', ');
+  return (a.service||'(service non défini)')+(t?' → '+t:'');
+}
+function actionsBlock(m,ev,z){
+  var ownList=z?((zoneBag(m,z,'actions',false)||{})[ev]):null,own=Array.isArray(ownList),inherit=z&&!own;
+  var list=z?(own?ownList:((m.actions&&m.actions[ev])||[])):((m.actions&&m.actions[ev])||[]);
+  var lbl=EVENTS.filter(function(x){return x[0]===ev})[0][1];
+  var base=' data-mid="'+m.id+'" data-lv="'+ev+'"'+(z?' data-zone="'+z+'"':'');
+  var h='<fieldset class="nblock acts lv-'+ev+(inherit?' inh':'')+'"><legend><b>'+esc(lbl)+'</b></legend><p class="ev">'+esc(EVENT_HINT[ev])+'</p>';
+  if(z)h+='<label class="chk ovr"><input type="checkbox" data-ovr="actions"'+base+(own?' checked':'')+'> Actions propres à cette zone'+(own?'':' <span class="muted">(suit le mode)</span>')+'</label>';
+  if(z&&own)h+='<label class="chk ovr"><input type="checkbox" data-addm="actions"'+base+(zoneAdds(m,z,'actions',ev)?' checked':'')+'> S\'ajoutent aux actions du mode (au lieu de les remplacer)</label>';
+  if(inherit){
+    h+=list.length?'<ul class="inhlist">'+list.map(function(a){return '<li class="mono">'+esc(actionSummary(a))+'</li>'}).join('')+'</ul>':'<p class="muted">Aucune action dans le mode.</p>';
+    return h+'</fieldset>';
+  }
+  list.forEach(function(a,i){
+    var d=a.data&&Object.keys(a.data).length?JSON.stringify(a.data):'';
+    var ent=Array.isArray(a.entity_id)?a.entity_id.join(', '):(a.entity_id||'');
+    var ab=base+' data-ai="'+i+'"';
+    h+='<div class="act"><label>Service<input class="mono"'+ab+' data-af="service" value="'+esc(a.service||'')+'" list="haServices" placeholder="script.turn_on" autocomplete="off"></label>'+
+      '<label>Entité(s)<input class="mono"'+ab+' data-af="entity_id" value="'+esc(ent)+'" list="haTargets" placeholder="script.ma_sirene" autocomplete="off"></label>'+
+      '<label class="wide">Données (JSON, facultatif)<input class="mono"'+ab+' data-af="data" value="'+esc(d)+'" placeholder=\'{"brightness": 255}\' autocomplete="off"></label>'+
+      '<button class="btn dng"'+ab+' data-aact="del" aria-label="Retirer cette action">Retirer</button></div>';
+  });
+  if(!list.length)h+='<p class="muted">Aucune action.</p>';
+  h+='<div class="addrow">'+ACTION_PRESETS.map(function(p){
+    return '<button class="btn" data-aact="add"'+base+' data-preset="'+p[0]+'">+ '+p[1]+'</button>';
+  }).join('')+'</div></fieldset>';
+  return h;
+}
+function reactTab(m,kind){
+  var z=reactScope(),evs=EVENTS.filter(function(e){return !(z&&e[0]==='enter')});
+  var h='<p class="tabhint">'+(kind==='notif'
+    ?'Pour chaque évènement, choisis si une notification part, vers quel service Home Assistant, et avec quel message.'
+    :'Pour chaque évènement, choisis les services Home Assistant à appeler : lancer un script, allumer ou éteindre une entité…')+'</p>'+
+    scopeSelect(m)+helpCard(kind)+serviceDatalists();
+  evs.forEach(function(e){h+=kind==='notif'?notifBlock(m,e[0],z):actionsBlock(m,e[0],z)});
   return h;
 }
 function settingsTab(m){
@@ -1910,11 +2130,11 @@ function renderModes(){
     var act=x.id===cm.id;
     return '<button class="mitem'+(x.id===m.id?' sel':'')+'" data-msel="'+x.id+'"><i style="background:'+safeColor(x.color)+'"></i><span><b>'+esc(x.name)+'</b><small>'+esc(x.desc||'')+'</small></span>'+(act?'<em class="tag act">Actif</em>':'')+'</button>';
   }).join('')+'<button class="btn" data-cact="addMode">+ Nouveau mode</button></nav>';
-  var tabs=[['levels','Niveaux'],['notif','Notifications'],['settings','Réglages'],['compare','Comparer les modes']];
+  var tabs=[['levels','Niveaux'],['notif','Notifications'],['actions','Actions'],['settings','Réglages'],['compare','Comparer les modes']];
   var d='<div class="mdhead"><div class="mdtitle"><i style="background:'+safeColor(m.color)+'"></i><h2>'+esc(m.name)+'</h2></div>'+
     '<button class="btn'+(m.id===cm.id?'':' pri')+'" data-cact="activate" data-mid="'+m.id+'"'+(m.id===cm.id?' disabled':'')+'>'+(m.id===cm.id?'Mode actif':'Activer ce mode')+'</button></div>'+
     '<div class="mtabs" role="tablist">'+tabs.map(function(t){return '<button role="tab" data-mtab="'+t[0]+'" aria-selected="'+(tab===t[0])+'">'+t[1]+'</button>'}).join('')+'</div>'+
-    '<div class="mbody">'+(tab==='levels'?levelsTab(m):tab==='notif'?notifTab(m):tab==='settings'?settingsTab(m):'<p class="tabhint">Tous les modes côte à côte. Les cases en italique héritent du niveau du dessous.</p>'+matrixHTML())+'</div>';
+    '<div class="mbody">'+(tab==='levels'?levelsTab(m):tab==='notif'?reactTab(m,'notif'):tab==='actions'?reactTab(m,'actions'):tab==='settings'?settingsTab(m):'<p class="tabhint">Tous les modes côte à côte. Les cases en italique héritent du niveau du dessous.</p>'+matrixHTML())+'</div>';
   return '<div class="cfg-head"><div><h2>Modes</h2><p>Un mode décide quel capteur déclenche quoi, et qui est notifié.</p></div></div>'+
     '<div class="mlayout">'+list+'<div class="mdetail">'+d+'</div></div>';
 }
@@ -2010,6 +2230,43 @@ function cfgAction(d){
 }
 function cfgChange(t){
   var d=t.dataset,m=d.mid?modeById(d.mid):null;
+  if(t.id==='reactZone'){ui.reactZone=t.value;renderConfig();return}
+  if(d.addm&&m){ // addition au réglage du mode plutôt que remplacement
+    var zr=(m.zones=m.zones||{})[d.zone];
+    if(!zr)return;
+    zr.add=zr.add||{};zr.add[d.addm]=zr.add[d.addm]||{};
+    if(t.checked)zr.add[d.addm][d.lv]=true;else delete zr.add[d.addm][d.lv];
+    save();renderConfig();return;
+  }
+  if(d.ovr&&m){ // réglage propre à une zone : on part d'une copie de celui du mode
+    var kind=d.ovr,bag=zoneBag(m,d.zone,kind,true);
+    if(t.checked){
+      var src=kind==='notify'?(m.notify&&m.notify[d.lv]):(m.actions&&m.actions[d.lv]);
+      bag[d.lv]=JSON.parse(JSON.stringify(src||(kind==='notify'?{on:false,target:'',repeat:0,msg:''}:[])));
+    }else delete bag[d.lv];
+    var zz=m.zones[d.zone];
+    if(!t.checked&&zz.add&&zz.add[kind]){delete zz.add[kind][d.lv];if(!Object.keys(zz.add[kind]).length)delete zz.add[kind];if(!Object.keys(zz.add).length)delete zz.add}
+    if(zz.notify&&!Object.keys(zz.notify).length)delete zz.notify;
+    if(zz.actions&&!Object.keys(zz.actions).length)delete zz.actions;
+    if(!Object.keys(zz).length)delete m.zones[d.zone];
+    save();renderConfig();return;
+  }
+  if(d.af!==undefined&&m){
+    var list=d.zone?(zoneBag(m,d.zone,'actions',true)[d.lv]=zoneBag(m,d.zone,'actions',true)[d.lv]||[]):((m.actions=m.actions||{})[d.lv]=(m.actions[d.lv]||[])),act=list[+d.ai];
+    if(!act)return;
+    if(d.af==='data'){
+      var raw=t.value.trim();
+      if(!raw){delete act.data;t.removeAttribute('aria-invalid')}
+      else{
+        try{var j=JSON.parse(raw);if(j&&typeof j==='object'&&!Array.isArray(j)){act.data=j;t.removeAttribute('aria-invalid')}else throw 0}
+        catch(err){t.setAttribute('aria-invalid','true');t.title='JSON invalide : non enregistré';return}
+      }
+    }else if(d.af==='entity_id'){
+      var ids=t.value.split(',').map(function(x){return x.trim().toLowerCase()}).filter(Boolean);
+      if(ids.length)act.entity_id=ids.length>1?ids:ids[0];else delete act.entity_id;
+    }else act.service=t.value.trim().toLowerCase();
+    save();return;
+  }
   if(d.rk!==undefined){ // le type de cible change : recharger la liste des cibles
     var sel=document.querySelector('[data-rt="'+d.rk+'"]');
     sel.innerHTML=targetOptions(t.value).map(function(o){return '<option value="'+esc(o.v)+'">'+esc(o.t)+'</option>'}).join('');
@@ -2028,8 +2285,13 @@ function cfgChange(t){
     save();refresh();return;
   }
   if(d.nf&&m){
-    m.notify=m.notify||{};var n=m.notify[d.lv]=m.notify[d.lv]||{on:false,target:'',repeat:0,msg:''};
+    var nb=d.zone?zoneBag(m,d.zone,'notify',true):(m.notify=m.notify||{});
+    var n=nb[d.lv]=nb[d.lv]||{on:false,target:'',repeat:0,msg:''};
     n[d.nf]=d.nf==='on'?t.checked:d.nf==='repeat'?Math.max(0,parseInt(t.value,10)||0):t.value;
+    if(d.nf==='msg'){
+      var pv=t.closest('fieldset')&&t.closest('fieldset').querySelector('.prev'),se=sampleEnt(d.zone||'');
+      if(pv)pv.textContent='Aperçu : '+(fillTpl(t.value,d.lv==='enter'?null:se,m,d.lv==='enter'?'':d.lv)||'—');
+    }
     save();return;
   }
   if(d.haid!==undefined){
@@ -2079,6 +2341,26 @@ document.addEventListener('click',function(ev){
     }
     return;
   }
+  if(t.dataset.ins!==undefined){
+    var f=ui.lastField;
+    if(f&&document.contains(f)&&!f.disabled){
+      var st=f.selectionStart==null?f.value.length:f.selectionStart,en=f.selectionEnd==null?st:f.selectionEnd;
+      f.value=f.value.slice(0,st)+t.dataset.ins+f.value.slice(en);
+      f.focus();try{f.setSelectionRange(st+t.dataset.ins.length,st+t.dataset.ins.length)}catch(e){}
+      f.dispatchEvent(new Event('change',{bubbles:true}));
+    }else{t.title='Clique d\'abord dans le champ où insérer la variable'}
+    return;
+  }
+  if(t.dataset.aact){
+    var am=modeById(t.dataset.mid),az=t.dataset.zone,alv=t.dataset.lv;
+    if(!am)return;
+    var al=az?(zoneBag(am,az,'actions',true)[alv]=zoneBag(am,az,'actions',true)[alv]||[]):((am.actions=am.actions||{})[alv]=am.actions[alv]||[]);
+    if(t.dataset.aact==='add'){
+      var pr=ACTION_PRESETS.filter(function(x){return x[0]===t.dataset.preset})[0];
+      al.push({service:pr?pr[2]:''});
+    }else if(t.dataset.aact==='del')al.splice(+t.dataset.ai,1);
+    save();renderConfig();return;
+  }
   if(t.dataset.cact){cfgAction(t.dataset);return}
   if(t.dataset.arm&&HA){
     model.mode=t.dataset.arm;renderHeader();API.setMode(t.dataset.arm);return;
@@ -2101,6 +2383,10 @@ document.addEventListener('click',function(ev){
   }
 });
 $('#config').addEventListener('change',function(ev){cfgChange(ev.target)});
+$('#config').addEventListener('focusin',function(ev){
+  var t=ev.target;
+  if(t.matches&&t.matches('input[data-nf="msg"],input[data-af],input[data-nf="target"]'))ui.lastField=t;
+});
 $('#config').addEventListener('input',function(ev){
   if(ev.target.id==='lvFilter'){
     ui.lvFilter=ev.target.value;

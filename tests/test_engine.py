@@ -96,7 +96,10 @@ class _Services:
         self.calls: list[tuple] = []
 
     def has_service(self, domain, service) -> bool:
-        return (domain, service) == ("notify", "mobile_app_test")
+        return (domain, service) in {
+            ("notify", "mobile_app_test"), ("notify", "zone_only"),
+            ("script", "turn_on"), ("light", "turn_on"),
+        }
 
     async def async_call(self, domain, service, data, blocking=False) -> None:
         self.calls.append((domain, service, data))
@@ -244,6 +247,81 @@ def test_snapshot_shape():
     assert snap["mode_id"] == "off" and snap["counts"]["critical"] == 1
     assert snap["ents"]["e2"] == {"state": "on", "on": True, "level": "critical", "latched": "critical"}
     assert engine.zone_status("r1") == ("ok", 0) or engine.zone_status("r1")[0] in ("ok", "critical")
+
+
+def test_mode_actions_run_with_variables():
+    hass, engine = _build()
+    mode = engine.config["modes"][0]
+    mode["actions"] = {"critical": [
+        {"service": "script.turn_on", "entity_id": "script.sirene",
+         "data": {"variables": {"msg": "{name} - {zone} ({floor}, {type})"}}},
+        {"service": "light.turn_on", "entity_id": "light.a, light.b"},
+        {"service": "pas_un_service"},
+    ]}
+    hass.set("binary_sensor.fumee", "on")
+    hass.run_tasks()
+    calls = [c for c in hass.services.calls if c[0] != "notify"]
+    assert calls[0] == ("script", "turn_on", {
+        "variables": {"msg": "Fumée - Salon (RDC, Fumée)"},
+        "entity_id": "script.sirene"})
+    assert calls[1][2]["entity_id"] == ["light.a", "light.b"]
+    assert len(calls) == 2
+
+
+def test_zone_override_replaces_mode_reaction():
+    hass, engine = _build()
+    # la fumée est dans la pièce r1 (Salon) : sa zone a ses propres notification et action
+    mode = engine.config["modes"][0]
+    mode["actions"] = {"critical": [{"service": "light.turn_on", "entity_id": "light.global"}]}
+    mode["zones"] = {"r1": {
+        "notify": {"critical": {"on": True, "target": "notify.zone_only", "msg": "Salon {name}"}},
+        "actions": {"critical": [{"service": "script.turn_on", "entity_id": "script.salon"}]},
+    }}
+    # e2 n'est rattaché à aucune pièce par `room` : on le place dans le Salon par position
+    hass.set("binary_sensor.fumee", "on")
+    hass.run_tasks()
+    targets = [(c[0], c[1], c[2].get("entity_id")) for c in hass.services.calls]
+    assert ("notify", "zone_only", None) in targets
+    assert ("script", "turn_on", "script.salon") in targets
+    assert ("light", "turn_on", "light.global") not in targets
+    assert ("notify", "mobile_app_test", None) not in targets
+
+
+def test_enter_and_clear_reactions():
+    hass, engine = _build()
+    away = engine.config["modes"][1]
+    away["notify"]["enter"] = {"on": True, "target": "notify.mobile_app_test", "msg": "Mode {mode} à {time}"}
+    away["actions"] = {"enter": [{"service": "light.turn_on", "entity_id": "light.hall"}]}
+    engine.async_set_mode("away")
+    hass.run_tasks()
+    assert any(c[0] == "light" and c[2]["entity_id"] == "light.hall" for c in hass.services.calls)
+    assert any(c[0] == "notify" and c[2]["message"].startswith("Mode Absence à ") for c in hass.services.calls)
+    # retour à la normale : notification « clear »
+    engine.config["modes"][0]["notify"]["clear"] = {"on": True, "target": "notify.mobile_app_test", "msg": "OK {name}"}
+    engine.async_set_mode("off")
+    hass.set("binary_sensor.fumee", "on")
+    hass.set("binary_sensor.fumee", "off")
+    hass.run_tasks()
+    assert any(c[0] == "notify" and c[2]["message"] == "OK Fumée" for c in hass.services.calls)
+
+
+def test_zone_reaction_can_add_to_mode():
+    hass, engine = _build()
+    mode = engine.config["modes"][0]
+    mode["actions"] = {"critical": [{"service": "light.turn_on", "entity_id": "light.global"}]}
+    mode["zones"] = {"r1": {
+        "notify": {"critical": {"on": True, "target": "notify.zone_only", "msg": "Salon {name}"}},
+        "actions": {"critical": [{"service": "script.turn_on", "entity_id": "script.salon"}]},
+        "add": {"notify": {"critical": True}, "actions": {"critical": True}},
+    }}
+    hass.set("binary_sensor.fumee", "on")
+    hass.run_tasks()
+    targets = [(c[0], c[1], c[2].get("entity_id")) for c in hass.services.calls]
+    # zone ET mode : les deux notifications et les deux actions partent
+    assert ("notify", "zone_only", None) in targets
+    assert ("notify", "mobile_app_test", None) in targets
+    assert ("script", "turn_on", "script.salon") in targets
+    assert ("light", "turn_on", "light.global") in targets
 
 
 if __name__ == "__main__":
