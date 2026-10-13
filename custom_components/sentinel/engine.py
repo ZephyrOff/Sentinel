@@ -28,6 +28,7 @@ from .logic import (
     current_mode,
     default_config,
     effective_delay,
+    entity_key,
     exposed_items,
     fill_template,
     find_mode,
@@ -128,7 +129,7 @@ class SentinelEngine:
         if self._unsub_states:
             self._unsub_states()
             self._unsub_states = None
-        entity_ids = sorted({e["entity"] for e in self.config["ents"] if e.get("entity")})
+        entity_ids = sorted({entity_key(e) for e in self.config["ents"] if entity_key(e)})
         if entity_ids:
             self._unsub_states = async_track_state_change_event(
                 self.hass, entity_ids, self._handle_state_event
@@ -138,12 +139,12 @@ class SentinelEngine:
     def _handle_state_event(self, event: Event) -> None:
         entity_id = event.data.get("entity_id")
         for ent in self.config["ents"]:
-            if ent.get("entity") == entity_id:
+            if entity_key(ent) == entity_id:
                 self._evaluate(ent, silent=False)
         self._notify()
 
     def _is_on(self, ent: dict[str, Any]) -> bool:
-        entity_id = ent.get("entity")
+        entity_id = entity_key(ent)
         if not entity_id:
             return False
         state = self.hass.states.get(entity_id)
@@ -380,7 +381,7 @@ class SentinelEngine:
         mode = current_mode(self.config)
         ents: dict[str, Any] = {}
         for ent in self.config["ents"]:
-            entity_id = ent.get("entity")
+            entity_id = entity_key(ent)
             state = self.hass.states.get(entity_id) if entity_id else None
             ents[ent["id"]] = {
                 "state": state.state if state else None,

@@ -106,6 +106,7 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px
 #plan .proom{fill:var(--surface2);stroke:var(--scene-wall);stroke-width:2;vector-effect:non-scaling-stroke;cursor:move}
 #plan .proom.sel{stroke:var(--accent);fill:color-mix(in srgb,var(--accent) 10%,var(--surface2))}
 #plan .ghost{fill:none;stroke:var(--idle);stroke-dasharray:5 4;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:none;opacity:.7}
+#plan .mq{fill:color-mix(in srgb,var(--accent) 12%,transparent);stroke:var(--accent);stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;pointer-events:none}
 #plan .vx{fill:var(--surface);stroke:var(--accent);stroke-width:2;vector-effect:non-scaling-stroke;cursor:grab}
 #plan .vx:hover,#plan .vx.sel{fill:var(--accent)}
 #plan .mid{fill:var(--accent);opacity:.35;cursor:copy}
@@ -688,7 +689,15 @@ var RANK={idle:0,sense:1,active:2,alarm:3};
 function worst(list){return list.reduce(function(a,e){var s=sev(e);return RANK[s]>RANK[a]?s:a},'idle')}
 function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
 function sevVar(s){return s==='alarm'?'--alarm':s==='active'?'--warn':s==='sense'?'--accent':'--idle'}
-function stateText(e){return e.on?TYPES[e.type].on:TYPES[e.type].off}
+function stateText(e){
+  // en mode HA, on distingue « fermé » d'une entité absente ou indisponible
+  if(HA&&live&&e.entity){
+    var x=live.ents[e.id];
+    if(x&&(x.state===null||x.state===undefined))return 'Introuvable';
+    if(x&&(x.state==='unavailable'||x.state==='unknown'))return 'Indisponible';
+  }
+  return e.on?TYPES[e.type].on:TYPES[e.type].off;
+}
 function pad2(n){return (n<10?'0':'')+n}
 function nowStr(){var d=new Date();return pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds())}
 function slug(s){return String(s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')||'x'}
@@ -1000,11 +1009,11 @@ function build(){
   disposeGroup(root);pickables=[];pulsers=[];
   renderer.setClearColor(css('--scene-bg'));
   var cSlab=new THREE.Color(css('--scene-slab')),cWall=css('--scene-wall'),cFg=css('--fg'),cAcc=css('--accent');
-  var maxX=0,maxZ=0,maxLvl=0;
-  model.rooms.forEach(function(r){maxX=Math.max(maxX,r.x+r.w);maxZ=Math.max(maxZ,r.z+r.d)});
+  var maxX=0,maxZ=0,minX=0,minZ=0,maxLvl=0;
+  model.rooms.forEach(function(r){maxX=Math.max(maxX,r.x+r.w);maxZ=Math.max(maxZ,r.z+r.d);minX=Math.min(minX,r.x);minZ=Math.min(minZ,r.z)});
   model.floors.forEach(function(f){maxLvl=Math.max(maxLvl,f.level)});
   var pitch=WALL_H+ui.explode;
-  orbit.tx=maxX/2;orbit.tz=maxZ/2;orbit.ty=(maxLvl*pitch+WALL_H)/2-0.3;
+  orbit.tx=(minX+maxX)/2;orbit.tz=(minZ+maxZ)/2;orbit.ty=(maxLvl*pitch+WALL_H)/2-0.3;
 
   model.floors.forEach(function(f){
     var g=new THREE.Group();g.position.y=f.level*pitch;root.add(g);
@@ -1108,7 +1117,7 @@ function pickAt(ev){
 }
 function pick(ev){
   var p=pickAt(ev);
-  if(!p){ui.sel=null;renderSide();build();return}
+  if(!p){ui.sel=null;ui.multi=[];renderSide();build();return}
   if(p.kind==='ent'){toggle(p.id);return}
   ui.sel=p;renderSide();build();
   var el=$('.room.sel');if(el&&el.scrollIntoView)el.scrollIntoView({block:'nearest'});
@@ -1138,14 +1147,41 @@ var FURN_KINDS=Object.keys(TYPES).filter(function(k){return TYPES[k].furniture})
 var SENSOR_KINDS=Object.keys(TYPES).filter(function(k){return !TYPES[k].opening&&!TYPES[k].furniture});
 function snap(v){return Math.round(v*2)/2}
 function editorDims(){
-  var W=12,H=9;
-  model.rooms.forEach(function(r){W=Math.max(W,r.x+r.w);H=Math.max(H,r.z+r.d)});
-  return {W:W+2,H:H+2};
+  var x1=12,z1=9,x0=0,z0=0;
+  model.rooms.forEach(function(r){
+    x1=Math.max(x1,r.x+r.w);z1=Math.max(z1,r.z+r.d);
+    x0=Math.min(x0,Math.floor(r.x)-2);z0=Math.min(z0,Math.floor(r.z)-2);
+  });
+  model.ents.forEach(function(e){
+    x1=Math.max(x1,e.x+1);z1=Math.max(z1,e.z+1);
+    x0=Math.min(x0,Math.floor(e.x)-2);z0=Math.min(z0,Math.floor(e.z)-2);
+  });
+  return {x0:x0,z0:z0,W:x1+2-x0,H:z1+2-z0};
+}
+/* sélection multiple : ui.multi = ['room:r1','ent:e4',…] dès qu'il y a au moins deux éléments */
+function groupMode(){return !!ui.multi&&ui.multi.length>1}
+function mkey(kind,id){return kind+':'+id}
+function isSel(kind,id){
+  if(groupMode())return ui.multi.indexOf(mkey(kind,id))>=0;
+  return !!ui.sel&&ui.sel.kind===kind&&ui.sel.id===id;
+}
+function selKeys(){
+  if(groupMode())return ui.multi.slice();
+  return ui.sel?[mkey(ui.sel.kind,ui.sel.id)]:[];
+}
+function splitKey(k){var i=k.indexOf(':');return {kind:k.slice(0,i),id:k.slice(i+1)}}
+function setSelection(keys){
+  ui.vsel=null;
+  if(keys.length>=2){ui.multi=keys;ui.sel=null;return}
+  ui.multi=[];
+  ui.sel=keys.length?splitKey(keys[0]):null;
 }
 function polyPath(p){return 'M'+p.map(function(q){return q[0]+' '+q[1]}).join('L')+'Z'}
 function renderEditor(){
   var ed=$('#editor');
   var d=editorDims(),fl=ui.editFloor;
+  // défilement conservé ; si le plan s'étend vers le haut / la gauche, on compense pour que le contenu ne saute pas
+  var oldPlan=$('#editor .plan'),oldSL=oldPlan?oldPlan.scrollLeft:0,oldST=oldPlan?oldPlan.scrollTop:0,od=ui.dims;
   var tb='<div class="tb">';
   model.floors.slice().sort(function(a,b){return b.level-a.level}).forEach(function(f){
     tb+='<button class="chip" data-efloor="'+f.id+'" aria-pressed="'+(fl===f.id)+'">'+esc(f.name)+'</button>';
@@ -1160,21 +1196,21 @@ function renderEditor(){
       '<select id="newType" aria-label="Type de capteur">'+SENSOR_KINDS.map(function(k){return '<option value="'+k+'">'+TYPES[k].label+'</option>'}).join('')+'</select>'+
       '<button class="btn" data-act="addEnt">+ Capteur</button>'+
       '<span class="spacer"></span><button class="btn" data-act="reset">Réinitialiser l\'exemple</button></div>';
-  var svg='<div class="plan"><svg id="plan" width="'+d.W*S+'" height="'+d.H*S+'" viewBox="0 0 '+d.W+' '+d.H+'">'+
+  var svg='<div class="plan"><svg id="plan" width="'+d.W*S+'" height="'+d.H*S+'" viewBox="'+d.x0+' '+d.z0+' '+d.W+' '+d.H+'">'+
     '<defs><pattern id="gp" width="1" height="1" patternUnits="userSpaceOnUse"><path class="gl" d="M1 0H0V1"/></pattern></defs>'+
-    '<rect width="'+d.W+'" height="'+d.H+'" fill="url(#gp)"/>';
+    '<rect x="'+d.x0+'" y="'+d.z0+'" width="'+d.W+'" height="'+d.H+'" fill="url(#gp)"/>';
   model.rooms.filter(function(r){return r.floor!==fl}).forEach(function(r){
     svg+='<path class="ghost" d="'+polyPath(r.pts)+'"/>';
   });
   model.rooms.filter(function(r){return r.floor===fl}).forEach(function(r){
-    var sel=ui.sel&&ui.sel.kind==='room'&&ui.sel.id===r.id;
+    var sel=isSel('room',r.id);
     var lp=labelPt(r),ar=Math.abs(ptsArea(r.pts));
     svg+='<g><path class="proom'+(sel?' sel':'')+(r.outdoor?' out '+(r.ground==='paving'?'pav':'grs'):'')+'" data-kind="room" data-id="'+r.id+'" d="'+polyPath(r.pts)+'"/>'+
       '<path class="wl" d="'+wallPath(r)+'"/><text class="rn" x="'+lp.x+'" y="'+(lp.z-0.05)+'">'+esc(r.name)+'</text>'+
       '<text class="rs" x="'+lp.x+'" y="'+(lp.z+0.35)+'">'+(isRect(r)?fm(r.w)+' × '+fm(r.d)+' m · ':'')+fm(ar)+' m²</text></g>';
   });
   model.ents.filter(function(e){return e.floor===fl&&e.room}).forEach(function(e){
-    var r=roomOf(e),w=e.w,sel=ui.sel&&ui.sel.kind==='ent'&&ui.sel.id===e.id;
+    var r=roomOf(e),w=e.w,sel=isSel('ent',e.id);
     var g0=roomEdges(r)[e.edge],tx=g0.ax+g0.ux*(e.off-w/2),ty=g0.az+g0.uz*(e.off-w/2);
     // repère local : x le long du mur, y vers l'intérieur de la pièce
     var m=[g0.ux,g0.uz,g0.nx,g0.nz,tx,ty].map(function(v){return Math.round(v*1e4)/1e4}).join(' ');
@@ -1188,17 +1224,17 @@ function renderEditor(){
   });
   model.ents.filter(function(e){return e.floor===fl&&TYPES[e.type].furniture}).forEach(function(e){
     var fc=e.face||'S',ew=(fc==='E'||fc==='W')?e.d:e.w,eh=(fc==='E'||fc==='W')?e.w:e.d,hx=ew/2,hz=eh/2;
-    var sel=ui.sel&&ui.sel.kind==='ent'&&ui.sel.id===e.id;
+    var sel=isSel('ent',e.id);
     var front=fc==='S'?'M'+(-hx)+' '+hz+'H'+hx:fc==='N'?'M'+(-hx)+' '+(-hz)+'H'+hx:fc==='E'?'M'+hx+' '+(-hz)+'V'+hz:'M'+(-hx)+' '+(-hz)+'V'+hz;
     svg+='<g class="pfurn s-'+sev(e)+(sel?' sel':'')+'" data-kind="furn" data-id="'+e.id+'" transform="translate('+e.x+' '+e.z+')">'+
       '<rect data-kind="furn" data-id="'+e.id+'" x="'+(-hx)+'" y="'+(-hz)+'" width="'+ew+'" height="'+eh+'"/><path class="fr" d="'+front+'"/>'+
       '<text x="0" y="0">'+TYPES[e.type].g+'</text></g>';
   });
   model.ents.filter(function(e){return e.floor===fl&&!e.room&&!TYPES[e.type].furniture}).forEach(function(e){
-    var sel=ui.sel&&ui.sel.kind==='ent'&&ui.sel.id===e.id;
+    var sel=isSel('ent',e.id);
     svg+='<g class="pent'+(sel?' sel':'')+'" data-kind="ent" data-id="'+e.id+'" transform="translate('+e.x+' '+e.z+')"><circle data-kind="ent" data-id="'+e.id+'" r="0.32"/><text>'+TYPES[e.type].g+'</text></g>';
   });
-  var selR=ui.sel&&ui.sel.kind==='room'?model.rooms.find(function(x){return x.id===ui.sel.id&&x.floor===fl}):null;
+  var selR=!groupMode()&&ui.sel&&ui.sel.kind==='room'?model.rooms.find(function(x){return x.id===ui.sel.id&&x.floor===fl}):null;
   if(selR){
     var eds=roomEdges(selR),tip=ui.ortho!==false?'Tirer pour décrocher le mur':'Glisser pour ajouter un sommet';
     eds.forEach(function(g,i){
@@ -1212,13 +1248,32 @@ function renderEditor(){
       svg+='<circle class="vx'+(vs?' sel':'')+'" data-kind="vertex" data-id="'+selR.id+'" data-i="'+i+'" cx="'+q[0]+'" cy="'+q[1]+'" r="0.2"><title>Glisser pour déplacer · double-clic pour supprimer</title></circle>';
     });
   }
+  if(ui.marquee){
+    var mq=ui.marquee;
+    svg+='<rect class="mq" x="'+Math.min(mq.x0,mq.x1)+'" y="'+Math.min(mq.z0,mq.z1)+'" width="'+Math.abs(mq.x1-mq.x0)+'" height="'+Math.abs(mq.z1-mq.z0)+'"/>';
+  }
   svg+='</svg></div>';
   ed.innerHTML=tb+svg+'<aside class="insp" id="insp"></aside>';
+  ui.dims=d;
+  var newPlan=$('#editor .plan');
+  if(newPlan&&oldPlan){
+    newPlan.scrollLeft=oldSL+(od?(od.x0-d.x0)*S:0);
+    newPlan.scrollTop=oldST+(od?(od.z0-d.z0)*S:0);
+  }
   renderInspector();
 }
 function renderInspector(){
   var el=$('#insp');if(!el)return;
   var s=ui.sel,h='';
+  if(groupMode()){
+    var nr=ui.multi.filter(function(k){return k.indexOf('room:')===0}).length,ne=ui.multi.length-nr;
+    el.innerHTML='<span class="lbl">Sélection multiple</span><p><b>'+ui.multi.length+' éléments</b> : '+nr+' pièce'+(nr>1?'s':'')+', '+ne+' capteur'+(ne>1?'s':'')+' ou meuble'+(ne>1?'s':'')+'.</p>'+
+      '<p>Glisser l\'un d\'eux déplace tout l\'ensemble. Les ouvertures suivent leur pièce, les capteurs et meubles situés dans une pièce sélectionnée se déplacent avec elle.</p>'+
+      '<p>Maj + clic ajoute ou retire un élément.</p>'+
+      '<button class="btn" data-act="clearSel">Désélectionner</button>'+
+      '<button class="btn dng" data-act="delMulti">Supprimer la sélection</button>';
+    return;
+  }
   if(s&&s.kind==='room'){
     var r=model.rooms.find(function(x){return x.id===s.id});
     if(r){
@@ -1265,7 +1320,7 @@ function renderInspector(){
       '<button class="btn dng" data-act="del">Supprimer le capteur</button>';
     }
   }
-  if(!h)h='<span class="lbl">Inspecteur</span><p>Sélectionne une pièce ou un capteur sur le plan pour le modifier.</p><p>Les capteurs rejoignent automatiquement la pièce qui les contient.</p>';
+  if(!h)h='<span class="lbl">Inspecteur</span><p>Sélectionne une pièce ou un capteur sur le plan pour le modifier.</p><p>Les capteurs rejoignent automatiquement la pièce qui les contient.</p><p>Maj + clic, ou un cadre tracé sur le plan, sélectionne plusieurs éléments pour les déplacer ensemble.</p>';
   el.innerHTML=h;
 }
 var TPLS={
@@ -1314,24 +1369,63 @@ function bindEditor(){
   var ed=$('#editor'),drag=null;
   function pos(ev){
     var svg=$('#plan'),r=svg.getBoundingClientRect(),d=editorDims();
-    return {x:(ev.clientX-r.left)/r.width*d.W,z:(ev.clientY-r.top)/r.height*d.H};
+    return {x:d.x0+(ev.clientX-r.left)/r.width*d.W,z:d.z0+(ev.clientY-r.top)/r.height*d.H};
+  }
+  function groupDrag(p){
+    var rooms=[],ents=[],seen={},minx=1e9,minz=1e9;
+    function addEnt(e){if(e.room||seen[e.id])return;seen[e.id]=1;ents.push({e:e,x:e.x,z:e.z});minx=Math.min(minx,e.x-0.2);minz=Math.min(minz,e.z-0.2)}
+    ui.multi.forEach(function(k){
+      var q=splitKey(k);
+      if(q.kind==='room'){
+        var r=model.rooms.find(function(x){return x.id===q.id});if(!r)return;
+        rooms.push({r:r,pts0:copyPts(r.pts)});minx=Math.min(minx,r.x);minz=Math.min(minz,r.z);
+        model.ents.forEach(function(e){if(e.floor===r.floor&&roomOf(e)===r)addEnt(e)});
+      }else{
+        var e=model.ents.find(function(x){return x.id===q.id});if(e)addEnt(e);
+      }
+    });
+    return {kind:'group',p0:p,rooms:rooms,ents:ents,minx:minx,minz:minz,moved:false};
   }
   ed.addEventListener('pointerdown',function(ev){
-    var t=ev.target.closest&&ev.target.closest('[data-kind]');
-    if(!t||!$('#plan')||!$('#plan').contains(t))return;
-    var kind=t.dataset.kind,id=t.dataset.id,p=pos(ev);
+    if(!$('#plan')||!ev.target.closest||!ev.target.closest('#plan'))return;
+    var t=ev.target.closest('[data-kind]'),p=pos(ev),add=ev.shiftKey||ev.ctrlKey||ev.metaKey;
+    if(!t||!$('#plan').contains(t)){ // fond du plan : cadre de sélection
+      drag={kind:'marquee',p0:p,add:add,base:add?selKeys():[],moved:false};
+      ui.marquee={x0:p.x,z0:p.z,x1:p.x,z1:p.z};
+      ed.setPointerCapture(ev.pointerId);
+      return;
+    }
+    var kind=t.dataset.kind,id=t.dataset.id;
+    var selectable=kind==='room'||kind==='furn'||kind==='ent';
+    if(selectable){
+      var key=mkey(kind==='room'?'room':'ent',id);
+      if(add){ // Maj / Ctrl / Cmd : ajoute ou retire de la sélection
+        var keys=selKeys(),k=keys.indexOf(key);
+        if(k>=0)keys.splice(k,1);else keys.push(key);
+        setSelection(keys);
+        if(keys.indexOf(key)<0||!groupMode()){renderEditor();renderSide();return}
+        drag=groupDrag(p);
+        ed.setPointerCapture(ev.pointerId);renderEditor();renderSide();
+        return;
+      }
+      if(groupMode()&&ui.multi.indexOf(key)>=0){ // glisser un membre : tout le groupe suit
+        drag=groupDrag(p);
+        ed.setPointerCapture(ev.pointerId);
+        return;
+      }
+    }
     if(kind!=='vertex'&&kind!=='mid')ui.vsel=null;
     if(kind==='open'){
-      ui.sel={kind:'ent',id:id};
+      ui.multi=[];ui.sel={kind:'ent',id:id};
       drag={kind:'open',id:id,p0:p};
     }else if(kind==='room'){
       var r=model.rooms.find(function(x){return x.id===id});
-      ui.sel={kind:'room',id:id};
+      ui.multi=[];ui.sel={kind:'room',id:id};
       var inside=model.ents.filter(function(e){return e.floor===r.floor&&roomOf(e)===r});
       drag={kind:'room',id:id,p0:p,r0:{x:r.x,z:r.z},pts0:copyPts(r.pts),ents:inside.map(function(e){return {e:e,x:e.x,z:e.z}})};
     }else if(kind==='vertex'){
       var vr=model.rooms.find(function(x){return x.id===id}),vi=+t.dataset.i,now=Date.now();
-      ui.sel={kind:'room',id:id};
+      ui.multi=[];ui.sel={kind:'room',id:id};
       if(ui.lastVert&&ui.lastVert.id===id&&ui.lastVert.i===vi&&now-ui.lastVert.t<400&&vr.pts.length>3){
         ui.lastVert=null;ui.vsel=null;
         removeVertex(vr,vi);save();renderEditor();renderSide();renderInspector();
@@ -1341,12 +1435,12 @@ function bindEditor(){
       drag=vertexDrag(vr,vi,p);
     }else if(kind==='mid'){
       var mr=model.rooms.find(function(x){return x.id===id});
-      ui.sel={kind:'room',id:id};
+      ui.multi=[];ui.sel={kind:'room',id:id};
       drag=midDrag(mr,+t.dataset.i,p);
       ui.vsel=drag.kind==='vertex'?{id:id,i:drag.i}:null;
     }else{
       var e=model.ents.find(function(x){return x.id===id});
-      ui.sel={kind:'ent',id:id};
+      ui.multi=[];ui.sel={kind:'ent',id:id};
       drag={kind:'ent',id:id,p0:p,e0:{x:e.x,z:e.z}};
     }
     ed.setPointerCapture(ev.pointerId);
@@ -1368,16 +1462,25 @@ function bindEditor(){
       var g1=eds[bi];
       op.off=Math.round(((p.x-g1.ax)*g1.ux+(p.z-g1.az)*g1.uz)*4)/4;
       syncOpenings();
+    }else if(drag.kind==='marquee'){
+      ui.marquee.x1=p.x;ui.marquee.z1=p.z;
+      if(Math.hypot(dx,dz)>0.15)drag.moved=true;
+    }else if(drag.kind==='group'){
+      var gx=snap(dx),gz=snap(dz);
+      drag.rooms.forEach(function(o){o.r.pts=o.pts0.map(function(q){return [q[0]+gx,q[1]+gz]});bboxSync(o.r)});
+      drag.ents.forEach(function(o){o.e.x=o.x+gx;o.e.z=o.z+gz});
+      syncOpenings();
+      if(gx||gz)drag.moved=true;
     }else if(drag.kind==='room'){
       var r=model.rooms.find(function(x){return x.id===drag.id});
-      var nx=Math.max(0,snap(drag.r0.x+dx)),nz=Math.max(0,snap(drag.r0.z+dz)),sx=nx-drag.r0.x,sz=nz-drag.r0.z;
+      var nx=snap(drag.r0.x+dx),nz=snap(drag.r0.z+dz),sx=nx-drag.r0.x,sz=nz-drag.r0.z;
       r.pts=drag.pts0.map(function(q){return [q[0]+sx,q[1]+sz]});
       bboxSync(r);
       drag.ents.forEach(function(o){if(!o.e.room){o.e.x=o.x+sx;o.e.z=o.z+sz}});
       syncOpenings();
     }else if(drag.kind==='vertex'){
       var vr=model.rooms.find(function(x){return x.id===drag.id}),n=drag.pts0.length;
-      var q=[Math.max(0,snap4(p.x)),Math.max(0,snap4(p.z))],np=copyPts(drag.pts0);
+      var q=[snap4(p.x),snap4(p.z)],np=copyPts(drag.pts0);
       np[drag.i]=q;
       if(ui.ortho!==false){
         var pi=(drag.i+n-1)%n,ni=(drag.i+1)%n;
@@ -1389,19 +1492,34 @@ function bindEditor(){
       var pr=model.rooms.find(function(x){return x.id===drag.id});
       var sd=snap4(dx*drag.n[0]+dz*drag.n[1]),pp=copyPts(drag.pts0);
       [drag.a,drag.b].forEach(function(k){pp[k]=[pp[k][0]+drag.n[0]*sd,pp[k][1]+drag.n[1]*sd]});
-      if(!badPoly(pp)&&pp.every(function(q){return q[0]>=-1e-6&&q[1]>=-1e-6})){pr.pts=pp;bboxSync(pr);if(sd!==0)drag.moved=true;syncOpenings()}
+      if(!badPoly(pp)){pr.pts=pp;bboxSync(pr);if(sd!==0)drag.moved=true;syncOpenings()}
     }else{
       var e=model.ents.find(function(x){return x.id===drag.id});
-      e.x=Math.max(0.2,Math.round((drag.e0.x+dx)*4)/4);e.z=Math.max(0.2,Math.round((drag.e0.z+dz)*4)/4);
+      e.x=Math.round((drag.e0.x+dx)*4)/4;e.z=Math.round((drag.e0.z+dz)*4)/4;
     }
-    var keep=$('#plan').parentNode.scrollLeft,keepT=$('#plan').parentNode.scrollTop;
     renderEditor();
-    $('#plan').parentNode.scrollLeft=keep;$('#plan').parentNode.scrollTop=keepT;
   });
   function stop(){
     if(!drag)return;
     var d=drag,r=d.id&&model.rooms.find(function(x){return x.id===d.id});
     drag=null;
+    if(d.kind==='marquee'){
+      var mq=ui.marquee;ui.marquee=null;
+      if(!d.moved){if(!d.add)setSelection([])}
+      else{
+        var x0=Math.min(mq.x0,mq.x1),x1=Math.max(mq.x0,mq.x1),z0=Math.min(mq.z0,mq.z1),z1=Math.max(mq.z0,mq.z1),found=d.base.slice();
+        var add1=function(k){if(found.indexOf(k)<0)found.push(k)};
+        model.rooms.forEach(function(rm){
+          if(rm.floor===ui.editFloor&&rm.x>=x0&&rm.x+rm.w<=x1&&rm.z>=z0&&rm.z+rm.d<=z1)add1(mkey('room',rm.id));
+        });
+        model.ents.forEach(function(e){
+          if(e.floor===ui.editFloor&&!e.room&&e.x>=x0&&e.x<=x1&&e.z>=z0&&e.z<=z1)add1(mkey('ent',e.id));
+        });
+        setSelection(found);
+      }
+      renderEditor();renderSide();renderInspector();
+      return;
+    }
     if(d.moved)ui.lastVert=null; // un glisser n'est pas la moitié d'un double-clic
     if(d.undo&&!d.moved&&r)d.undo(r);
     if(r&&(d.kind==='vertex'||d.kind==='push')){orientFix(r);bboxSync(r);syncOpenings()}
@@ -1412,7 +1530,7 @@ function bindEditor(){
 
   ed.addEventListener('click',function(ev){
     var b=ev.target.closest('[data-efloor],[data-act]');if(!b)return;
-    if(b.dataset.efloor){ui.editFloor=b.dataset.efloor;ui.sel=null;renderEditor();renderSide();return}
+    if(b.dataset.efloor){ui.editFloor=b.dataset.efloor;ui.sel=null;ui.multi=[];renderEditor();renderSide();return}
     var a=b.dataset.act;
     if(a==='addFloor'){
       var lvl=model.floors.reduce(function(m,f){return Math.max(m,f.level)},-1)+1;
@@ -1422,18 +1540,18 @@ function bindEditor(){
       var z=model.rooms.filter(function(r){return r.floor===ui.editFloor}).reduce(function(m,r){return Math.max(m,r.z+r.d)},0);
       var r={id:'r'+Date.now(),floor:ui.editFloor,name:'Nouvelle pièce',pts:rectPts(0,z,3,3),wl:[1,1,1,1]};
       bboxSync(r);
-      model.rooms.push(r);ui.sel={kind:'room',id:r.id};
+      model.rooms.push(r);ui.multi=[];ui.sel={kind:'room',id:r.id};
     }else if(a==='addZone'){
       var zx=model.rooms.filter(function(r){return r.floor===ui.editFloor}).reduce(function(m,r){return Math.max(m,r.z+r.d)},0);
       var zn={id:'x'+Date.now(),floor:ui.editFloor,name:'Jardin',pts:rectPts(0,zx,6,4),wl:[1,1,1,1],outdoor:true,ground:'grass'};
       bboxSync(zn);
-      model.rooms.push(zn);ui.sel={kind:'room',id:zn.id};
+      model.rooms.push(zn);ui.multi=[];ui.sel={kind:'room',id:zn.id};
     }else if(a==='addOpen'){
       var ot=$('#newOpen').value,rm=ui.sel&&ui.sel.kind==='room'?model.rooms.find(function(x){return x.id===ui.sel.id}):null;
       if(!rm||rm.floor!==ui.editFloor)rm=model.rooms.find(function(x){return x.floor===ui.editFloor});
       if(rm){
         var op={id:'o'+Date.now(),name:TYPES[ot].label+' '+rm.name.toLowerCase(),type:ot,floor:rm.floor,room:rm.id,edge:0,off:roomEdges(rm)[0].len/2,w:TYPES[ot].w,x:0,z:0,on:false};
-        model.ents.push(op);syncOpenings();ui.sel={kind:'ent',id:op.id};
+        model.ents.push(op);syncOpenings();ui.multi=[];ui.sel={kind:'ent',id:op.id};
       }
     }else if(a==='addFurn'){
       var ft=$('#newFurn').value,T2=TYPES[ft],fr=ui.sel&&ui.sel.kind==='room'?model.rooms.find(function(x){return x.id===ui.sel.id}):null;
@@ -1441,7 +1559,7 @@ function bindEditor(){
       var fp=fr?labelPt(fr):{x:1,z:1};
       var fe={id:'m'+Date.now(),name:T2.label+(fr?' '+fr.name.toLowerCase():''),type:ft,floor:ui.editFloor,face:'S',
         x:fp.x,z:fp.z,w:T2.w,d:T2.d,h:T2.h,on:false};
-      model.ents.push(fe);ui.sel={kind:'ent',id:fe.id};
+      model.ents.push(fe);ui.multi=[];ui.sel={kind:'ent',id:fe.id};
     }else if(a==='snapWall'&&ui.sel){
       var se=model.ents.find(function(x){return x.id===ui.sel.id}),sr=se&&roomOf(se);
       if(sr){
@@ -1464,14 +1582,28 @@ function bindEditor(){
       var ep=room?labelPt(room):{x:1,z:1};
       var en={id:'e'+Date.now(),name:TYPES[type].label+(room?' '+room.name.toLowerCase():''),type:type,floor:ui.editFloor,
         x:ep.x,z:ep.z,on:false};
-      model.ents.push(en);ui.sel={kind:'ent',id:en.id};
+      model.ents.push(en);ui.multi=[];ui.sel={kind:'ent',id:en.id};
     }else if(a==='del'&&ui.sel){
       if(ui.sel.kind==='room'){
         var rr=model.rooms.find(function(x){return x.id===ui.sel.id});
         model.ents=model.ents.filter(function(e){return !(e.floor===rr.floor&&roomOf(e)===rr)});
         model.rooms=model.rooms.filter(function(x){return x.id!==rr.id});
       }else model.ents=model.ents.filter(function(x){return x.id!==ui.sel.id});
-      ui.sel=null;
+      ui.sel=null;ui.multi=[];
+    }else if(a==='clearSel'){
+      setSelection([]);
+    }else if(a==='delMulti'&&groupMode()){
+      ui.multi.slice().forEach(function(k){
+        var q=splitKey(k);
+        if(q.kind==='room'){
+          var rr=model.rooms.find(function(x){return x.id===q.id});
+          if(rr){
+            model.ents=model.ents.filter(function(e){return !(e.floor===rr.floor&&roomOf(e)===rr)});
+            model.rooms=model.rooms.filter(function(x){return x.id!==rr.id});
+          }
+        }else model.ents=model.ents.filter(function(x){return x.id!==q.id});
+      });
+      setSelection([]);
     }else if(a==='tpl'&&ui.sel&&ui.sel.kind==='room'){
       var tr=model.rooms.find(function(x){return x.id===ui.sel.id});
       if(tr){
@@ -1484,7 +1616,7 @@ function bindEditor(){
       if(dr&&dr.pts.length>3)removeVertex(dr,ui.vsel.i);
       ui.vsel=null;
     }else if(a==='reset'){
-      model=sample();syncOpenings();ui.editFloor=model.floors[0].id;ui.floor='all';ui.sel=null;
+      model=sample();syncOpenings();ui.editFloor=model.floors[0].id;ui.floor='all';ui.sel=null;ui.multi=[];
     }
     save();renderEditor();renderSide();renderHeader();
   });
@@ -1501,7 +1633,7 @@ function bindEditor(){
     else if((t.id==='fVx'||t.id==='fVz')&&ui.vsel&&s.kind==='room'){
       var np=copyPts(o.pts),k=t.id==='fVx'?0:1,nv=parseFloat(t.value);
       if(isNaN(nv)||!np[ui.vsel.i])return;
-      np[ui.vsel.i][k]=Math.max(0,nv);
+      np[ui.vsel.i][k]=nv;
       if(badPoly(np))return;
       o.pts=np;bboxSync(o);
     }
@@ -1513,7 +1645,7 @@ function bindEditor(){
     else if(t.id==='fOut'){o.outdoor=t.checked;o.wl=o.pts.map(function(){return 1});if(t.checked)o.ground=o.ground||'grass'}
     else if(t.id==='fGround')o.ground=t.value;
     else if(/^fWal\d+$/.test(t.id)){o.wl[parseInt(t.id.slice(4),10)]=t.checked?1:0}
-    else if(t.id==='fEntity')o.entity=t.value.trim();
+    else if(t.id==='fEntity')o.entity=t.value.trim().toLowerCase();
     else if(t.id==='fInvert')o.invert=t.checked;
     else if(t.id==='fDelay')o.delay=Math.max(0,parseInt(t.value,10)||0);
     else if(t.id==='fFace')o.face=t.value;
@@ -1828,7 +1960,7 @@ function setView(v){
   $('#ovFloors').hidden=!watch;$('#legend').hidden=!watch;document.querySelector('.ov.br').hidden=!watch;
   $('#view').classList.toggle('editing',!watch);
   document.querySelector('.main').classList.toggle('wide',cfg);
-  ui.sel=null;
+  ui.sel=null;ui.multi=[];
   if(edit){if(ui.floor!=='all')ui.editFloor=ui.floor;renderEditor()}
   else if(cfg)renderConfig();
   else{resize();build()}
@@ -1867,14 +1999,14 @@ document.addEventListener('click',function(ev){
   }
   if(t.dataset.floor&&!t.closest('#editor')){
     if(ui.view==='watch')ui.floor=t.dataset.floor;
-    else if(t.dataset.floor!=='all'){ui.editFloor=t.dataset.floor;ui.sel=null;renderEditor()}
+    else if(t.dataset.floor!=='all'){ui.editFloor=t.dataset.floor;ui.sel=null;ui.multi=[];renderEditor()}
     renderSide();renderOverlays();if(ui.view==='watch')build();return;
   }
-  if(t.dataset.room){ui.sel={kind:'room',id:t.dataset.room};renderSide();if(ui.view==='watch')build();else{
+  if(t.dataset.room){ui.multi=[];ui.sel={kind:'room',id:t.dataset.room};renderSide();if(ui.view==='watch')build();else{
     var r=model.rooms.find(function(x){return x.id===t.dataset.room});if(r)ui.editFloor=r.floor;renderEditor()}return}
   if(t.dataset.ent){
     if(ui.view==='watch')toggle(t.dataset.ent);
-    else{var e=model.ents.find(function(x){return x.id===t.dataset.ent});ui.sel={kind:'ent',id:e.id};ui.editFloor=e.floor;renderEditor();renderSide()}
+    else{var e=model.ents.find(function(x){return x.id===t.dataset.ent});ui.multi=[];ui.sel={kind:'ent',id:e.id};ui.editFloor=e.floor;renderEditor();renderSide()}
   }
 });
 $('#config').addEventListener('change',function(ev){cfgChange(ev.target)});

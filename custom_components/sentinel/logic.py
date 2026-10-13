@@ -31,6 +31,8 @@ ON_STATES = frozenset(
     {
         "on", "open", "opening", "unlocked", "detected", "triggered", "wet",
         "true", "active", "motion", "occupied", "alarm", "problem", "unsafe",
+        # états francisés (capteurs template, intégrations localisées)
+        "ouvert", "ouverte", "allumé", "allumée", "détecté", "détectée",
     }
 )
 
@@ -232,6 +234,11 @@ def resolve_level(mode: dict[str, Any], ent: dict[str, Any],
     if level is None:
         level = mode.get("def", "off")
     return level if level in LEVELS else "off"
+
+
+def entity_key(ent: dict[str, Any]) -> str:
+    """Identifiant d'entité nettoyé (espaces, casse) ; "" si l'entité n'est pas liée."""
+    return str(ent.get("entity") or "").strip().lower()
 
 
 def state_is_on(state: str | None, invert: bool = False) -> bool:
