@@ -12,7 +12,7 @@ set_mode:
 
 acknowledge:
   name: Acquitter
-  description: Coupe les notifications répétées en cours, jusqu'au prochain déclenchement.
+  description: Coupe les notifications répétées en cours et efface les déclenchements mémorisés (statut, alarme, zones) si la mémorisation est activée.
 
 reset_counters:
   name: Réinitialiser les compteurs

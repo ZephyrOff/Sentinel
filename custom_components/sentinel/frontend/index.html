@@ -341,6 +341,7 @@ pre.yaml{background:var(--surface2);border:1px solid var(--line);border-radius:8
       <div class="seg armed" id="armTabs" role="group" aria-label="Mode d'alarme"></div>
     </div>
     <div class="pill" id="status"><i></i><span>Tout est calme</span></div>
+    <button class="btn" id="ackBtn" hidden title="Efface les déclenchements mémorisés et coupe les rappels">Acquitter</button>
   </header>
 
   <div class="main">
@@ -391,6 +392,7 @@ var API=(function(){
     return a.hass.callWS({type:'sentinel/save_config',config:m}).catch(function(e){console.error('Sentinel : sauvegarde impossible',e)});
   };
   a.save=function(model){a.pending=model;clearTimeout(a.timer);a.timer=setTimeout(a._send,500)};
+  a.ack=function(){return a._send().then(function(){return a.hass.callService('sentinel','acknowledge',{})})};
   a.setMode=function(id){return a._send().then(function(){return a.hass.callService('sentinel','set_mode',{mode:id})})};
   a.subscribe=function(cb){return a.hass.connection.subscribeMessage(cb,{type:'sentinel/subscribe'})};
   a.moreInfo=function(entityId){
@@ -681,7 +683,7 @@ function levelInfo(e,m,skipEnt){
 }
 /* idle | sense (info) | active (warning) | alarm (critical) */
 function sev(e){
-  if(live){var x=live.ents[e.id];return x&&x.level?(LV2SEV[x.level]||'idle'):'idle'}
+  if(live){var x=live.ents[e.id],lv=x&&(x.level||(latchOn()&&x.latched));return lv?(LV2SEV[lv]||'idle'):'idle'}
   if(!e.on)return 'idle';
   return LV2SEV[levelInfo(e).level]||'idle';
 }
@@ -756,7 +758,10 @@ function renderHeader(){
   p.className='pill'+(c.critical?' alarm':c.warning?' warn':c.info?' info':'');
   p.querySelector('span').textContent=c.critical?'Critical · '+c.critical:c.warning?'Warning · '+c.warning:c.info?'Info · '+c.info:'Tout est calme';
   document.querySelectorAll('#viewTabs button').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.view===ui.view))});
+  var ack=$('#ackBtn');
+  if(ack)ack.hidden=!(HA&&live&&(c.total>0||(latchOn()&&live.latched_count>0)));
 }
+function latchOn(){return !!(model.cfg&&(model.cfg.latch_alarm||model.cfg.latch_zones))}
 
 /* ---------- sidebar ---------- */
 function renderSide(){
@@ -1918,6 +1923,10 @@ function renderHA(){
   var cfg=model.cfg,items=haItems(),p=cfg.prefix||'sentinel';
   var h='<div class="cfg-head"><div><h2>Entités Home Assistant exposées</h2><p>Sentinel publie ces entités pour tes automatisations, cartes et notifications. Le préfixe, chaque identifiant et l\'exposition de chaque entité se règlent ici.</p></div></div>'+
     '<div class="hacard"><label>Préfixe des entités<input id="fPrefix" class="mono" value="'+esc(p)+'"></label></div>'+
+    '<div class="hacard"><b>Mémorisation des déclenchements</b>'+
+      '<label class="chk"><input id="fLatchAlarm" type="checkbox"'+(cfg.latch_alarm?' checked':'')+'> Statut, compteurs et alarme : rester au niveau le plus haut atteint jusqu\'à acquittement</label>'+
+      '<label class="chk"><input id="fLatchZones" type="checkbox"'+(cfg.latch_zones?' checked':'')+'> Zones : rester au niveau le plus haut atteint jusqu\'à acquittement</label>'+
+      '<p class="muted">Sans mémorisation, tout revient à « ok » dès que le capteur redevient normal. L\'acquittement se fait avec le bouton « Acquitter » du panneau ou le service <span class="mono">sentinel.acknowledge</span>.</p></div>'+
     '<div class="hatw"><table class="hat"><thead><tr><th>Exposer</th><th>Entité</th><th>État actuel</th><th>Attributs</th><th>Rôle</th></tr></thead><tbody>';
   items.forEach(function(it){
     var on=(cfg.expose||{})[it.key]!==false,def=p+'_'+it.suffix,cur=(cfg.ids||{})[it.key]||'';
@@ -2029,6 +2038,8 @@ function cfgChange(t){
     save();renderConfig();return;
   }
   if(d.haexp!==undefined){model.cfg.expose=model.cfg.expose||{};model.cfg.expose[d.haexp]=t.checked;save();renderConfig();return}
+  if(t.id==='fLatchAlarm'){model.cfg.latch_alarm=t.checked;save();return}
+  if(t.id==='fLatchZones'){model.cfg.latch_zones=t.checked;save();return}
   if(t.id==='fPrefix'){model.cfg.prefix=slug(t.value)||'sentinel';save();renderConfig()}
 }
 
@@ -2128,6 +2139,8 @@ API.onSnapshot=function(snap){
   if(ui.view==='watch')build();
   else if(ui.view==='ha'&&!$('#config').contains(document.activeElement))renderConfig();
 };
+var ackBtn=$('#ackBtn');
+if(ackBtn)ackBtn.addEventListener('click',function(){if(HA)API.ack()});
 setView('watch');
 renderOverlays();
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(function(){if(ui.view==='watch')build()});

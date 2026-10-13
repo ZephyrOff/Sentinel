@@ -242,7 +242,7 @@ def test_snapshot_shape():
     hass.set("binary_sensor.fumee", "on")
     snap = engine.snapshot()
     assert snap["mode_id"] == "off" and snap["counts"]["critical"] == 1
-    assert snap["ents"]["e2"] == {"state": "on", "on": True, "level": "critical"}
+    assert snap["ents"]["e2"] == {"state": "on", "on": True, "level": "critical", "latched": "critical"}
     assert engine.zone_status("r1") == ("ok", 0) or engine.zone_status("r1")[0] in ("ok", "critical")
 
 
@@ -252,3 +252,37 @@ if __name__ == "__main__":
         fn()
         print("ok  ", fn.__name__)
     print(f"{len(tests)} tests passés")
+
+
+def test_latch_keeps_status_until_acknowledge():
+    hass, engine = _build()
+    engine.config["cfg"]["latch_alarm"] = True
+    hass.set("binary_sensor.fumee", "on")
+    assert engine.counts()["status"] == "critical"
+    hass.set("binary_sensor.fumee", "off")
+    # le capteur est revenu normal mais le statut reste mémorisé
+    assert engine.counts()["critical"] == 1
+    assert engine.snapshot()["ents"]["e2"]["latched"] == "critical"
+    # zones non mémorisées : revient à ok
+    assert engine.zone_status("r1") == ("ok", 0)
+    engine.async_acknowledge()
+    assert engine.counts()["status"] == "ok"
+    assert engine.snapshot()["latched_count"] == 0
+
+
+def test_latch_zones_independent_of_alarm():
+    hass, engine = _build()
+    engine.config["cfg"]["latch_zones"] = True
+    hass.set("binary_sensor.fumee", "on")
+    hass.set("binary_sensor.fumee", "off")
+    assert engine.counts()["status"] == "ok"
+    assert engine.zone_status("r1") == ("critical", 1)
+    engine.async_acknowledge()
+    assert engine.zone_status("r1") == ("ok", 0)
+
+
+def test_no_latch_by_default():
+    hass, engine = _build()
+    hass.set("binary_sensor.fumee", "on")
+    hass.set("binary_sensor.fumee", "off")
+    assert engine.counts()["status"] == "ok"

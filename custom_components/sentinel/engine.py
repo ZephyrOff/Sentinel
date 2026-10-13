@@ -67,6 +67,9 @@ class SentinelEngine:
         # clé exposée -> entity_id que Sentinel a lui-même attribué (pour ne pas
         # écraser un renommage fait à la main dans Home Assistant)
         self.applied_ids: dict[str, str] = {}
+        # id entité -> pire niveau atteint depuis le dernier acquittement
+        # (affiché dans le statut / l'alarme / les zones si la mémorisation est activée)
+        self._latched: dict[str, str] = {}
         self._signature = ""
 
     # ------------------------------------------------------------------ #
@@ -77,6 +80,11 @@ class SentinelEngine:
         if isinstance(data, dict):
             self.config = normalize_config(data.get("config"))
             self.total_since_reset = int(data.get("total_since_reset", 0))
+            latched = data.get("latched")
+            self._latched = (
+                {k: v for k, v in latched.items() if v in STATUS_RANK}
+                if isinstance(latched, dict) else {}
+            )
             applied = data.get("applied_ids")
             self.applied_ids = dict(applied) if isinstance(applied, dict) else {}
         else:
@@ -109,6 +117,7 @@ class SentinelEngine:
                 "config": self.config,
                 "total_since_reset": self.total_since_reset,
                 "applied_ids": self.applied_ids,
+                "latched": self._latched,
             },
             1.0,
         )
@@ -121,6 +130,8 @@ class SentinelEngine:
         """Applique une nouvelle configuration. Retourne True si un rechargement
         de l'intégration est nécessaire (entités exposées modifiées)."""
         self.config = normalize_config(raw)
+        if not (self._flag("latch_alarm") or self._flag("latch_zones")):
+            self._latched.clear()
         self._save_soon()
         signature = structure_signature(self.config)
         needs_reload = signature != self._signature
@@ -167,6 +178,8 @@ class SentinelEngine:
     # ------------------------------------------------------------------ #
     def _evaluate_all(self, silent: bool) -> None:
         known = {e["id"] for e in self.config["ents"]}
+        for ent_id in [i for i in self._latched if i not in known]:
+            del self._latched[ent_id]
         for ent_id in [i for i in self._triggered if i not in known]:
             self._triggered.pop(ent_id, None)
             self._cancel_timers(ent_id)
@@ -211,6 +224,9 @@ class SentinelEngine:
             return
 
         self._triggered[ent_id] = level
+        memo = self._latched.get(ent_id)
+        if memo is None or STATUS_RANK.get(level, 0) > STATUS_RANK.get(memo, 0):
+            self._latched[ent_id] = level
         self._cancel_timers(ent_id)
         self._acked.discard(ent_id)
         if not silent:
@@ -351,6 +367,8 @@ class SentinelEngine:
         for cancel in self._repeat_timers.values():
             cancel()
         self._repeat_timers.clear()
+        self._latched.clear()
+        self._save_soon()
         self._log("Alertes acquittées")
         self._notify()
 
@@ -364,9 +382,25 @@ class SentinelEngine:
     # ------------------------------------------------------------------ #
     # Lecture
     # ------------------------------------------------------------------ #
+    def _flag(self, name: str) -> bool:
+        return bool((self.config.get("cfg") or {}).get(name))
+
+    def _effective(self, ent_id: str, latch: bool) -> str | None:
+        """Niveau courant, ou le pire niveau mémorisé si la mémorisation est active."""
+        current = self._triggered.get(ent_id)
+        if latch:
+            memo = self._latched.get(ent_id)
+            if memo and (current is None
+                         or STATUS_RANK.get(memo, 0) > STATUS_RANK.get(current, 0)):
+                return memo
+        return current
+
     def counts(self) -> dict[str, Any]:
         counts = {"info": 0, "warning": 0, "critical": 0}
-        for level in self._triggered.values():
+        latch = self._flag("latch_alarm")
+        ids = set(self._triggered) | (set(self._latched) if latch else set())
+        for ent_id in ids:
+            level = self._effective(ent_id, latch)
             if level in counts:
                 counts[level] += 1
         counts["total"] = counts["info"] + counts["warning"] + counts["critical"]
@@ -378,8 +412,9 @@ class SentinelEngine:
 
     def zone_status(self, room_id: str) -> tuple[str, int]:
         status, n = "ok", 0
+        latch = self._flag("latch_zones")
         for ent in self.config["ents"]:
-            level = self._triggered.get(ent["id"])
+            level = self._effective(ent["id"], latch)
             if not level:
                 continue
             room = room_of(self.config, ent)
@@ -399,6 +434,7 @@ class SentinelEngine:
                 "state": state.state if state else None,
                 "on": self._is_on(ent),
                 "level": self._triggered.get(ent["id"], ""),
+                "latched": self._latched.get(ent["id"], ""),
             }
         return {
             "mode_id": mode.get("id"),
@@ -407,6 +443,7 @@ class SentinelEngine:
             "last_trigger": self.last_trigger,
             "total_since_reset": self.total_since_reset,
             "ents": ents,
+            "latched_count": len(self._latched),
             "journal": self.journal,
         }
 

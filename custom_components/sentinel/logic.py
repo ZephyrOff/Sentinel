@@ -142,6 +142,9 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     cfg["cfg"].setdefault("prefix", "sentinel")
     cfg["cfg"].setdefault("ids", {})
     cfg["cfg"].setdefault("expose", {})
+    # mémorisation jusqu'à acquittement : statut/alarme/compteurs, et zones
+    cfg["cfg"]["latch_alarm"] = bool(cfg["cfg"].get("latch_alarm"))
+    cfg["cfg"]["latch_zones"] = bool(cfg["cfg"].get("latch_zones"))
     for mode in cfg["modes"]:
         mode.setdefault("def", "off")
         for bag in ("types", "rooms", "ents"):
@@ -340,9 +343,11 @@ def structure_signature(config: dict[str, Any]) -> str:
     """Change quand il faut recréer les entités exposées."""
     import json
 
+    # les options de mémorisation n'ont aucun effet sur les entités créées
+    cfg = {k: v for k, v in config["cfg"].items() if not k.startswith("latch_")}
     return json.dumps(
         [
-            config["cfg"],
+            cfg,
             [(m.get("id"), m.get("name")) for m in config["modes"]],
             [(r.get("id"), r.get("name")) for r in config["rooms"]],
         ],
