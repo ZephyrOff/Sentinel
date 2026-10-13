@@ -7,6 +7,7 @@ import voluptuous as vol
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import DOMAIN
 
@@ -65,12 +66,20 @@ def ws_subscribe(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
         connection.send_error(msg["id"], "not_loaded", "Sentinel n'est pas chargé")
         return
 
+    # Abonné au signal de mise à jour plutôt qu'à l'objet moteur : quand la
+    # configuration change et que l'intégration est rechargée, un nouveau moteur
+    # prend la suite sous le même signal et le panneau continue de recevoir les états.
     @callback
     def _push() -> None:
+        current = _engine(hass)
+        if current is None:
+            return
         connection.send_message(
-            websocket_api.event_message(msg["id"], engine.snapshot())
+            websocket_api.event_message(msg["id"], current.snapshot())
         )
 
-    connection.subscriptions[msg["id"]] = engine.async_add_listener(_push)
+    connection.subscriptions[msg["id"]] = async_dispatcher_connect(
+        hass, engine.signal, _push
+    )
     connection.send_result(msg["id"])
     _push()
