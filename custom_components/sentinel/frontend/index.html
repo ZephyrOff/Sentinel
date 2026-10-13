@@ -1759,6 +1759,15 @@ function haItems(){
     es.forEach(function(e){var l=levelInfo(e).level;if(l==='off')return;n++;if(w==='ok'||RANK[LV2SEV[l]]>RANK[LV2SEV[w]])w=l});
     it.push({key:'zone:'+r.id,domain:'sensor',suffix:'zone_'+slug(r.name)+'_status',label:'Zone « '+r.name+' »',state:w,attrs:{triggered:n},desc:'Statut de la zone (même échelle que le statut global).'});
   });
+  // même règle que le moteur : deux zones de même nom reçoivent _2, _3…
+  var used={};
+  it.forEach(function(x){
+    if((model.cfg.expose||{})[x.key]===false)return;
+    var o=(model.cfg.ids||{})[x.key],oid=o?slug(o):p+'_'+x.suffix,base=oid,n=2;
+    while(used[x.domain+'.'+oid]){oid=base+'_'+n;n++}
+    used[x.domain+'.'+oid]=1;
+    if(!o)x.suffix=oid.slice(p.length+1);
+  });
   return it;
 }
 function haId(it){var o=(model.cfg.ids||{})[it.key];return it.domain+'.'+(o||((model.cfg.prefix||'sentinel')+'_'+it.suffix))}

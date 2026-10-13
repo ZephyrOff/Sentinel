@@ -316,13 +316,22 @@ def exposed_items(config: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     items = []
+    used: set[tuple[str, str]] = set()
     for key, domain, suffix, name, icon in raw:
         if expose.get(key) is False:
             continue
         object_id = ids.get(key) or f"{prefix}_{suffix}"
+        if ids.get(key):
+            object_id = slugify(object_id)
+        # Deux pièces au même nom (« Nouvelle pièce », « Jardin »…) ne doivent pas
+        # produire le même identifiant : on numérote dans l'ordre de la configuration.
+        base, n = object_id, 2
+        while (domain, object_id) in used:
+            object_id = f"{base}_{n}"
+            n += 1
+        used.add((domain, object_id))
         items.append(
-            {"key": key, "domain": domain, "name": name, "icon": icon,
-             "object_id": slugify(object_id) if ids.get(key) else object_id}
+            {"key": key, "domain": domain, "name": name, "icon": icon, "object_id": object_id}
         )
     return items
 

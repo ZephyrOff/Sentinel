@@ -64,6 +64,9 @@ class SentinelEngine:
         self.journal: list[dict[str, Any]] = []
         self.last_trigger: dict[str, Any] | None = None
         self.total_since_reset = 0
+        # clé exposée -> entity_id que Sentinel a lui-même attribué (pour ne pas
+        # écraser un renommage fait à la main dans Home Assistant)
+        self.applied_ids: dict[str, str] = {}
         self._signature = ""
 
     # ------------------------------------------------------------------ #
@@ -74,6 +77,8 @@ class SentinelEngine:
         if isinstance(data, dict):
             self.config = normalize_config(data.get("config"))
             self.total_since_reset = int(data.get("total_since_reset", 0))
+            applied = data.get("applied_ids")
+            self.applied_ids = dict(applied) if isinstance(applied, dict) else {}
         else:
             self.config = default_config()
         self._signature = structure_signature(self.config)
@@ -95,9 +100,16 @@ class SentinelEngine:
             timers.clear()
         self._listeners.clear()
 
+    def save_now_soon(self) -> None:
+        self._save_soon()
+
     def _save_soon(self) -> None:
         self.store.async_delay_save(
-            lambda: {"config": self.config, "total_since_reset": self.total_since_reset},
+            lambda: {
+                "config": self.config,
+                "total_since_reset": self.total_since_reset,
+                "applied_ids": self.applied_ids,
+            },
             1.0,
         )
 

@@ -8,7 +8,8 @@ import voluptuous as vol
 
 from homeassistant.components import frontend, panel_custom
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 
 from .const import (
@@ -86,6 +87,50 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_RESET_COUNTERS, _reset)
 
 
+@callback
+def _async_sync_registry(hass: HomeAssistant, entry: ConfigEntry, engine: SentinelEngine) -> None:
+    """Aligne le registre d'entités sur la configuration, avant la création des entités.
+
+    - supprime les entités orphelines (pièce supprimée, entité masquée) qui
+      réserveraient des identifiants et feraient apparaître des « _2 », « _8 »… ;
+    - applique les identifiants renommés dans le panneau : le registre garde
+      sinon l'ancien entity_id, ce qui rendait le renommage sans effet.
+    """
+    registry = er.async_get(hass)
+    items = engine.items()
+    wanted = {f"{entry.entry_id}_{it['key']}": it for it in items}
+
+    for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if reg_entry.platform == DOMAIN and reg_entry.unique_id not in wanted:
+            registry.async_remove(reg_entry.entity_id)
+
+    explicit = (engine.config.get("cfg") or {}).get("ids") or {}
+    changed = False
+    for unique_id, item in wanted.items():
+        current = registry.async_get_entity_id(item["domain"], DOMAIN, unique_id)
+        if current is None:
+            continue
+        key = item["key"]
+        desired = f"{item['domain']}.{item['object_id']}"
+        # on ne renomme que ce que Sentinel a posé lui-même, ou ce que l'utilisateur
+        # a demandé explicitement dans le panneau ; un renommage manuel est respecté
+        mine = engine.applied_ids.get(key) in (None, current)
+        if current != desired and (explicit.get(key) or mine):
+            holder = registry.async_get(desired)
+            if holder is None or holder.unique_id == unique_id:
+                registry.async_update_entity(current, new_entity_id=desired)
+                current = desired
+        if (current == desired or mine) and engine.applied_ids.get(key) != current:
+            engine.applied_ids[key] = current
+            changed = True
+    stale = [k for k in engine.applied_ids if f"{entry.entry_id}_{k}" not in wanted]
+    for key in stale:
+        del engine.applied_ids[key]
+        changed = True
+    if changed:
+        engine.save_now_soon()
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
@@ -100,6 +145,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[f"{DOMAIN}_ws"] = True
     _register_services(hass)
 
+    _async_sync_registry(hass, entry, engine)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await engine.async_start()
     return True
