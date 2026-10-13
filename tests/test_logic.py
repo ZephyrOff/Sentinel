@@ -41,6 +41,19 @@ def test_room_of_by_position_and_attachment():
     assert logic.room_of(cfg, {"floor": "f9", "x": 2, "z": 2}) is None
 
 
+def test_room_of_polygon():
+    # pièce en L : le coin nord-est (x > 3, z < 2) est en dehors
+    cfg = {"rooms": [{"id": "l", "floor": "f0", "x": 0, "z": 0, "w": 6, "d": 5,
+                      "pts": [[0, 0], [3, 0], [3, 2], [6, 2], [6, 5], [0, 5]]}],
+           "ents": []}
+    inside = {"floor": "f0", "x": 5, "z": 4}
+    notch = {"floor": "f0", "x": 5, "z": 1}
+    edge = {"floor": "f0", "x": 3, "z": 1}
+    assert logic.room_of(cfg, inside)["id"] == "l"
+    assert logic.room_of(cfg, notch) is None
+    assert logic.room_of(cfg, edge)["id"] == "l"
+
+
 def test_level_priority_entity_zone_type_default():
     mode = {"def": "off", "types": {"motion": "warning"},
             "rooms": {"r1": "info"}, "ents": {"e1": "critical"}}

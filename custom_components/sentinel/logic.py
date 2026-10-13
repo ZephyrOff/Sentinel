@@ -7,7 +7,8 @@ Modèle de configuration (identique à celui du panneau) :
 
     {
       "floors": [{"id", "name", "short", "level"}],
-      "rooms":  [{"id", "floor", "name", "x", "z", "w", "d", "outdoor"?, ...}],
+      "rooms":  [{"id", "floor", "name", "pts": [[x, z], ...], "wl": [0|1, ...],
+                  "x", "z", "w", "d" (boîte englobante), "outdoor"?, ...}],
       "ents":   [{"id", "name", "type", "floor", "entity", "x", "z",
                   "room"?, "delay"?, "invert"?}],
       "mode":   "<id du mode actif>",
@@ -184,13 +185,40 @@ def room_of(config: dict[str, Any], ent: dict[str, Any]) -> dict[str, Any] | Non
     for room in rooms:
         if room.get("floor") != ent.get("floor"):
             continue
-        try:
-            if (room["x"] <= x <= room["x"] + room["w"]
-                    and room["z"] <= z <= room["z"] + room["d"]):
-                return room
-        except (KeyError, TypeError):
-            continue
+        if _room_contains(room, x, z):
+            return room
     return None
+
+
+def _room_contains(room: dict[str, Any], x: float, z: float) -> bool:
+    """Point dans la pièce : polygone `pts` si présent, sinon rectangle x/z/w/d."""
+    pts = room.get("pts")
+    try:
+        if isinstance(pts, list) and len(pts) >= 3:
+            return _in_polygon(pts, x, z)
+        return (room["x"] <= x <= room["x"] + room["w"]
+                and room["z"] <= z <= room["z"] + room["d"])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return False
+
+
+def _in_polygon(pts: list[Any], x: float, z: float) -> bool:
+    """Lancer de rayon ; un point sur le bord est dedans."""
+    eps = 1e-9
+    inside = False
+    j = len(pts) - 1
+    for i in range(len(pts)):
+        ax, az = float(pts[i][0]), float(pts[i][1])
+        bx, bz = float(pts[j][0]), float(pts[j][1])
+        cross = (bx - ax) * (z - az) - (bz - az) * (x - ax)
+        if (abs(cross) < eps
+                and min(ax, bx) - eps <= x <= max(ax, bx) + eps
+                and min(az, bz) - eps <= z <= max(az, bz) + eps):
+            return True
+        if (az > z) != (bz > z) and x < (bx - ax) * (z - az) / (bz - az) + ax:
+            inside = not inside
+        j = i
+    return inside
 
 
 def resolve_level(mode: dict[str, Any], ent: dict[str, Any],

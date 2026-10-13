@@ -39,7 +39,7 @@ Un élément **Sentinel** apparaît dans la barre latérale (réservé aux admin
 ## Premiers pas
 
 1. Ouvre le panneau **Sentinel**, onglet **Export**, et clique sur *Charger la maison d'exemple* pour voir à quoi ressemble une configuration complète (aucune entité réelle n'y est liée), ou pars de zéro.
-2. Onglet **Modélisation** : ajoute un étage, des pièces (« + Pièce », « + Zone extérieure »), des ouvertures et des meubles. Glisse-les sur le plan, règle les dimensions dans l'inspecteur.
+2. Onglet **Modélisation** : ajoute un étage, des pièces (« + Pièce », « + Zone extérieure »), des ouvertures et des meubles. Glisse-les sur le plan, règle les dimensions dans l'inspecteur. Une pièce sélectionnée affiche ses sommets : glisse-les pour changer la forme, tire le point au milieu d'un mur pour le décrocher, double-clique un sommet pour le supprimer, ou pars d'un gabarit (L, T, pan coupé).
 3. Pour chaque capteur, renseigne **l'entité Home Assistant** dans l'inspecteur (liste d'autocomplétion) :
    - `binary_sensor.*` (contact, mouvement, présence, fumée, fuite),
    - ou `cover.*`, `lock.*`, `switch.*`, `input_boolean.*`.
@@ -98,7 +98,7 @@ automation:
 ## Limites de la v0.1
 
 - Les entités exposées ne sont pas renommées si tu changes le préfixe après leur création : renomme-les dans le registre d'entités de Home Assistant.
-- L'éditeur 3D fonctionne en pièces rectangulaires (pas de formes en L).
+- Les pièces sont des polygones à angles quelconques (L, T, pan coupé…) sans trou : pas de cour intérieure.
 - Les règles se basent sur l'état courant : pas encore de plages horaires ni de bascule automatique de mode.
 - Pas d'actions sortantes (sirène, lumières) : utilise les événements et le statut dans tes automatisations.
 - Le panneau utilise des modules WebGL : un navigateur récent est nécessaire.
