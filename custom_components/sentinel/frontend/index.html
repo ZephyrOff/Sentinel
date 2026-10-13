@@ -1146,17 +1146,25 @@ var OPEN_KINDS=Object.keys(TYPES).filter(function(k){return TYPES[k].opening});
 var FURN_KINDS=Object.keys(TYPES).filter(function(k){return TYPES[k].furniture});
 var SENSOR_KINDS=Object.keys(TYPES).filter(function(k){return !TYPES[k].opening&&!TYPES[k].furniture});
 function snap(v){return Math.round(v*2)/2}
+/* Étendue du plan : par paliers de 4 m pour que l'agrandissement reste rare et contrôlable
+   (marge ≥ 2 m autour du contenu). Pendant un glisser, le plan ne rétrécit jamais. */
+var DIM_STEP=4;
 function editorDims(){
   var x1=12,z1=9,x0=0,z0=0;
   model.rooms.forEach(function(r){
-    x1=Math.max(x1,r.x+r.w);z1=Math.max(z1,r.z+r.d);
-    x0=Math.min(x0,Math.floor(r.x)-2);z0=Math.min(z0,Math.floor(r.z)-2);
+    x1=Math.max(x1,r.x+r.w);z1=Math.max(z1,r.z+r.d);x0=Math.min(x0,r.x);z0=Math.min(z0,r.z);
   });
   model.ents.forEach(function(e){
-    x1=Math.max(x1,e.x+1);z1=Math.max(z1,e.z+1);
-    x0=Math.min(x0,Math.floor(e.x)-2);z0=Math.min(z0,Math.floor(e.z)-2);
+    x1=Math.max(x1,e.x+1);z1=Math.max(z1,e.z+1);x0=Math.min(x0,e.x);z0=Math.min(z0,e.z);
   });
-  return {x0:x0,z0:z0,W:x1+2-x0,H:z1+2-z0};
+  x0=Math.min(0,Math.floor((x0-2)/DIM_STEP)*DIM_STEP);z0=Math.min(0,Math.floor((z0-2)/DIM_STEP)*DIM_STEP);
+  x1=Math.ceil((x1+2)/DIM_STEP)*DIM_STEP;z1=Math.ceil((z1+2)/DIM_STEP)*DIM_STEP;
+  var od=ui.dims;
+  if(ui.dragging&&od){
+    x0=Math.min(x0,od.x0);z0=Math.min(z0,od.z0);
+    x1=Math.max(x1,od.x0+od.W);z1=Math.max(z1,od.z0+od.H);
+  }
+  return {x0:x0,z0:z0,W:x1-x0,H:z1-z0};
 }
 /* sélection multiple : ui.multi = ['room:r1','ent:e4',…] dès qu'il y a au moins deux éléments */
 function groupMode(){return !!ui.multi&&ui.multi.length>1}
@@ -1320,7 +1328,7 @@ function renderInspector(){
       '<button class="btn dng" data-act="del">Supprimer le capteur</button>';
     }
   }
-  if(!h)h='<span class="lbl">Inspecteur</span><p>Sélectionne une pièce ou un capteur sur le plan pour le modifier.</p><p>Les capteurs rejoignent automatiquement la pièce qui les contient.</p><p>Maj + clic, ou un cadre tracé sur le plan, sélectionne plusieurs éléments pour les déplacer ensemble.</p>';
+  if(!h)h='<span class="lbl">Inspecteur</span><p>Sélectionne une pièce ou un capteur sur le plan pour le modifier.</p><p>Les capteurs rejoignent automatiquement la pièce qui les contient.</p><p>Maj + clic, ou un cadre tracé sur le plan, sélectionne plusieurs éléments pour les déplacer ensemble.</p><p>Flèches : déplacer la sélection de 0,25 m (Maj : 1 m). Échap : désélectionner. Suppr : supprimer.</p>';
   el.innerHTML=h;
 }
 var TPLS={
@@ -1497,10 +1505,12 @@ function bindEditor(){
       var e=model.ents.find(function(x){return x.id===drag.id});
       e.x=Math.round((drag.e0.x+dx)*4)/4;e.z=Math.round((drag.e0.z+dz)*4)/4;
     }
+    ui.dragging=true;
     renderEditor();
   });
   function stop(){
     if(!drag)return;
+    ui.dragging=false;
     var d=drag,r=d.id&&model.rooms.find(function(x){return x.id===d.id});
     drag=null;
     if(d.kind==='marquee'){
@@ -1527,6 +1537,67 @@ function bindEditor(){
   }
   ed.addEventListener('pointerup',stop);
   ed.addEventListener('pointercancel',stop);
+
+  /* clavier : flèches = déplacer la sélection (Maj : 1 m, sinon 0,25 m), Échap = désélectionner, Suppr = supprimer */
+  function nudge(dx,dz){
+    if(groupMode()){
+      var g=groupDrag({x:0,z:0});
+      g.rooms.forEach(function(o){o.r.pts=o.pts0.map(function(q){return [q[0]+dx,q[1]+dz]});bboxSync(o.r)});
+      g.ents.forEach(function(o){o.e.x=o.x+dx;o.e.z=o.z+dz});
+      syncOpenings();
+      return true;
+    }
+    var s=ui.sel;if(!s)return false;
+    if(s.kind==='room'){
+      var r=model.rooms.find(function(x){return x.id===s.id});if(!r)return false;
+      if(ui.vsel&&ui.vsel.id===r.id&&r.pts[ui.vsel.i]){ // sommet sélectionné : on ne bouge que lui
+        var d=vertexDrag(r,ui.vsel.i,{x:0,z:0}),n=d.pts0.length,np=copyPts(d.pts0),i=d.i;
+        var q=[snap4(d.pts0[i][0]+dx),snap4(d.pts0[i][1]+dz)];
+        np[i]=q;
+        if(ui.ortho!==false){
+          var pi=(i+n-1)%n,ni=(i+1)%n;
+          if(d.lp==='v')np[pi][0]=q[0];else if(d.lp==='h')np[pi][1]=q[1];
+          if(d.ln==='v')np[ni][0]=q[0];else if(d.ln==='h')np[ni][1]=q[1];
+        }
+        if(badPoly(np))return false;
+        r.pts=np;bboxSync(r);orientFix(r);syncOpenings();
+        return true;
+      }
+      var inside=model.ents.filter(function(e){return !e.room&&e.floor===r.floor&&roomOf(e)===r});
+      r.pts=r.pts.map(function(q){return [q[0]+dx,q[1]+dz]});bboxSync(r);
+      inside.forEach(function(e){e.x+=dx;e.z+=dz});
+      syncOpenings();
+      return true;
+    }
+    var e=model.ents.find(function(x){return x.id===s.id});if(!e)return false;
+    if(e.room){ // ouverture : glisse le long de son mur
+      var rr=model.rooms.find(function(x){return x.id===e.room}),ed0=rr&&roomEdges(rr)[e.edge];
+      var move=ed0?dx*ed0.ux+dz*ed0.uz:0;
+      if(!move)return false;
+      e.off=Math.round((e.off+move)*20)/20;
+      syncOpenings();
+      return true;
+    }
+    e.x+=dx;e.z+=dz;
+    return true;
+  }
+  document.addEventListener('keydown',function(ev){
+    if(ui.view!=='edit'||ev.ctrlKey||ev.metaKey||ev.altKey)return;
+    var tg=ev.target,tag=tg&&tg.tagName;
+    if(tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA'||(tg&&tg.isContentEditable))return;
+    if(ev.key==='Escape'){setSelection([]);renderEditor();renderSide();return}
+    if(ev.key==='Delete'){
+      var b=document.querySelector('#insp [data-act="del"],#insp [data-act="delMulti"]');
+      if(b){ev.preventDefault();b.click()}
+      return;
+    }
+    var D={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[ev.key];
+    if(!D)return;
+    var st=ev.shiftKey?1:0.25;
+    if(!nudge(D[0]*st,D[1]*st))return;
+    ev.preventDefault();
+    save();renderEditor();renderSide();renderInspector();renderHeader();
+  });
 
   ed.addEventListener('click',function(ev){
     var b=ev.target.closest('[data-efloor],[data-act]');if(!b)return;
