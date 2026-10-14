@@ -34,6 +34,7 @@ from .logic import (
     fill_data,
     find_mode,
     action_call,
+    adjacent_room_ids,
     reactions_for,
     template_values,
     normalize_config,
@@ -80,6 +81,10 @@ class SentinelEngine:
         self._latched: dict[str, str] = {}
         # id entité -> {"until": datetime, "kind": "exit" | "entry"} : déclenchement en attente
         self._pending: dict[str, dict[str, Any]] = {}
+        # détecteurs de mouvement : une personne est considérée présente tant qu'aucun
+        # mouvement n'est vu dans une pièce voisine (ou jusqu'à expiration)
+        self._hold: dict[str, datetime] = {}
+        self._hold_timers: dict[str, CALLBACK_TYPE] = {}
         self._signature = ""
 
     # ------------------------------------------------------------------ #
@@ -112,7 +117,7 @@ class SentinelEngine:
         if self._unsub_states:
             self._unsub_states()
             self._unsub_states = None
-        for timers in (self._delay_timers, self._repeat_timers):
+        for timers in (self._delay_timers, self._repeat_timers, self._hold_timers):
             for cancel in timers.values():
                 cancel()
             timers.clear()
@@ -173,15 +178,67 @@ class SentinelEngine:
         entity_id = event.data.get("entity_id")
         for ent in self.config["ents"]:
             if entity_key(ent) == entity_id:
+                self._track_motion(ent)
                 self._evaluate(ent, silent=False)
         self._notify()
 
-    def _is_on(self, ent: dict[str, Any]) -> bool:
+    def _raw_on(self, ent: dict[str, Any]) -> bool:
         entity_id = entity_key(ent)
         if not entity_id:
             return False
         state = self.hass.states.get(entity_id)
         return state_is_on(state.state if state else None, bool(ent.get("invert")))
+
+    def _is_on(self, ent: dict[str, Any]) -> bool:
+        return self._raw_on(ent) or ent.get("id") in self._hold
+
+    # -- présence maintenue des détecteurs de mouvement --
+    def _hold_minutes(self) -> int:
+        return int((self.config.get("cfg") or {}).get("hold_minutes") or 30)
+
+    def _track_motion(self, ent: dict[str, Any]) -> None:
+        """Un mouvement détecté maintient la présence ; il libère les pièces voisines."""
+        if ent.get("type") != "motion" or not self._raw_on(ent):
+            return
+        ent_id = ent["id"]
+        self._hold[ent_id] = dt_util.utcnow()
+        old = self._hold_timers.pop(ent_id, None)
+        if old:
+            old()
+
+        @callback
+        def _expire(_now: datetime) -> None:
+            self._hold_timers.pop(ent_id, None)
+            self._release_hold(ent_id)
+            self._notify()
+
+        self._hold_timers[ent_id] = async_call_later(
+            self.hass, self._hold_minutes() * 60, _expire
+        )
+        room = room_of(self.config, ent)
+        near = adjacent_room_ids(self.config, room["id"]) if room else set()
+        for other in self.config["ents"]:
+            if other.get("id") == ent_id or other.get("id") not in self._hold:
+                continue
+            orm = room_of(self.config, other)
+            if orm and orm.get("id") in near:
+                self._release_hold(other["id"])
+
+    def _release_hold(self, ent_id: str) -> None:
+        if self._hold.pop(ent_id, None) is None:
+            return
+        cancel = self._hold_timers.pop(ent_id, None)
+        if cancel:
+            cancel()
+        ent = next((e for e in self.config["ents"] if e["id"] == ent_id), None)
+        if ent is not None:
+            self._evaluate(ent, silent=False)
+
+    def _clear_holds(self) -> None:
+        for cancel in self._hold_timers.values():
+            cancel()
+        self._hold_timers.clear()
+        self._hold.clear()
 
     # ------------------------------------------------------------------ #
     # Évaluation
@@ -190,6 +247,8 @@ class SentinelEngine:
         known = {e["id"] for e in self.config["ents"]}
         for ent_id in [i for i in self._latched if i not in known]:
             del self._latched[ent_id]
+        for ent_id in [i for i in self._hold if i not in known]:
+            self._release_hold(ent_id)
         for ent_id in [i for i in self._triggered if i not in known]:
             self._triggered.pop(ent_id, None)
             self._cancel_timers(ent_id)
@@ -408,6 +467,7 @@ class SentinelEngine:
             self._cancel_timers(ent_id)
         self._triggered.clear()
         self._acked.clear()
+        self._clear_holds()
         self._log(f"Mode « {mode.get('name', '')} » activé")
         note, _cfg = self._react("enter", None, None, mode, "")
         if note:
@@ -434,6 +494,9 @@ class SentinelEngine:
             cancel()
         self._repeat_timers.clear()
         self._latched.clear()
+        # la présence maintenue des détecteurs de mouvement est aussi acquittée
+        for ent_id in list(self._hold):
+            self._release_hold(ent_id)
         self._save_soon()
         self._log("Alertes acquittées")
         self._notify()
@@ -511,6 +574,7 @@ class SentinelEngine:
                 "on": self._is_on(ent),
                 "level": self._triggered.get(ent["id"], ""),
                 "latched": self._latched.get(ent["id"], ""),
+                "held": ent["id"] in self._hold and not self._raw_on(ent),
                 # déclenchement différé par un délai de sortie ou d'entrée
                 **self._pending_info(ent["id"], now),
             }

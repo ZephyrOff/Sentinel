@@ -803,6 +803,7 @@ function stateText(e){
     var x=live.ents[e.id];
     if(x&&(x.state===null||x.state===undefined))return 'Introuvable';
     if(x&&(x.state==='unavailable'||x.state==='unknown'))return 'Indisponible';
+    if(x&&x.held)return 'Présence maintenue';
   }
   return e.on?TYPES[e.type].on:TYPES[e.type].off;
 }
@@ -973,8 +974,9 @@ function initScene(){
     var s=t/1000;
     pulsers.forEach(function(p){
       if(p.m)p.m.scale.setScalar(1+0.22*Math.sin(s*6));
-      var k=(s%1.4)/1.4;p.ring.scale.setScalar(1+k*3);p.ring.material.opacity=0.7*(1-k);
+      if(p.ring){var k=(s%1.4)/1.4;p.ring.scale.setScalar(1+k*3);p.ring.material.opacity=0.7*(1-k)}
     });
+    tickWaves(s);
     placeCam();renderer.render(scene,cam);
   })(0);
 }
@@ -1063,6 +1065,53 @@ function buildWalls(g,r,f,mat,dim){
     wallBox(g,mat,w,cur,w.len,0,H);
   });
 }
+/* ---------- ondes de détection : ondes concentriques au sol pour les capteurs (mouvement, présence, fumée, eau),
+   sphère « sonar » pour les ouvertures. Plus le niveau monte, plus les ondes sont nombreuses et rapides.
+   Un déclenchement en attente (délai d'entrée ou de sortie) donne une onde unique, lente et ambre. ---------- */
+var waves=[];
+var WCFG={info:{P:2.8,n:1},warning:{P:1.8,n:2},critical:{P:1.15,n:3}};
+var REDUCE_MOTION=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+function waveState(e){
+  var sv=sev(e);
+  if(sv!=='idle')return {level:sv==='alarm'?'critical':sv==='active'?'warning':'info',pending:false,cv:sevVar(sv)};
+  var pd=pendingOf(e);
+  if(pd&&levelInfo(e).level!=='off')return {level:levelInfo(e).level,pending:true,cv:'--warn'};
+  return null;
+}
+function addWave(g,e,x,y,z){
+  var ws=waveState(e);if(!ws)return;
+  var st=focusState(e);if(st&&!st.ok)return;
+  var col=new THREE.Color(css(ws.cv)),sonar=TYPES[e.type].family==='open',w={type:sonar?'sonar':'ripples',level:ws.level,pending:ws.pending,items:[]};
+  var n=sonar?2:3;
+  for(var i=0;i<n;i++){
+    var m=sonar
+      ?new THREE.Mesh(new THREE.SphereGeometry(1,20,14),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0,depthWrite:false}))
+      :new THREE.Mesh(new THREE.RingGeometry(0.9,1,64),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0,side:THREE.DoubleSide,depthWrite:false}));
+    if(sonar)m.position.set(x,y,z);
+    else{m.rotation.x=-Math.PI/2;m.position.set(x,0.13,z)}
+    m.renderOrder=3;g.add(m);w.items.push(m);
+  }
+  waves.push(w);
+}
+function tickWaves(sec){
+  waves.forEach(function(w){
+    var c=WCFG[w.level]||WCFG.info,P=c.P*(w.pending?1.7:1)*(REDUCE_MOTION?2:1),n=w.pending?1:c.n;
+    w.items.forEach(function(m,i){
+      var on=w.type==='sonar'?i<(n>1?2:1):i<n;
+      m.visible=on;if(!on)return;
+      var ph=((sec/P)+(w.type==='sonar'?i*0.5:i/n))%1;
+      if(w.type==='sonar'){
+        m.scale.setScalar(0.25+ph*(w.pending?1.7:2.4));
+        m.material.opacity=Math.pow(1-ph,1.6)*(w.pending?0.18:0.34);
+      }else{
+        var r=0.3+ph*(w.pending?2.4:3.4);
+        m.scale.set(r,r,1);
+        m.material.opacity=(1-ph)*(w.pending?0.45:0.85);
+      }
+    });
+  });
+}
+
 /* ---------- focus : met en avant ce qui est surveillé dans le mode actif ---------- */
 var FOCUS_LEVELS=['critical','warning','info'];
 function focusState(e){
@@ -1169,16 +1218,13 @@ function buildFurniture(g,e){
   }
   var hit=new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.55,Math.max(w,h)/2),8,6),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
   hit.position.set(e.x,el+h/2,e.z);hit.userData={ent:e.id};g.add(hit);pickables.push(hit);
-  if(s==='alarm'){
-    var rg=new THREE.Mesh(new THREE.RingGeometry(0.25,0.32,32),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.7,side:THREE.DoubleSide,depthWrite:false}));
-    rg.rotation.x=-Math.PI/2;rg.position.set(e.x,0.1,e.z);g.add(rg);pulsers.push({m:null,ring:rg});
-  }
+  addWave(g,e,e.x,el+h/2,e.z);
   styleFocus(grp,e);
 }
 
 function build(){
   if(!renderer)return;
-  disposeGroup(root);pickables=[];pulsers=[];ghostMat=null;
+  disposeGroup(root);pickables=[];pulsers=[];waves=[];ghostMat=null;
   renderer.setClearColor(css('--scene-bg'));
   var cSlab=new THREE.Color(css('--scene-slab')),cWall=css('--scene-wall'),cFg=css('--fg'),cAcc=css('--accent');
   var maxX=0,maxZ=0,minX=0,minZ=0,maxLvl=0;
@@ -1208,12 +1254,8 @@ function build(){
     });
     if(dim)return;
     model.ents.filter(function(e){return e.floor===f.id&&e.room}).forEach(function(e){
-      if(roomOf(e)){var s0=sev(e);
-        if(s0==='alarm'){
-          var c0=new THREE.Color(css('--alarm'));
-          var rg=new THREE.Mesh(new THREE.RingGeometry(0.25,0.32,32),new THREE.MeshBasicMaterial({color:c0,transparent:true,opacity:0.7,side:THREE.DoubleSide,depthWrite:false}));
-          rg.rotation.x=-Math.PI/2;rg.position.set(e.x,0.1,e.z);g.add(rg);pulsers.push({m:null,ring:rg});
-        }
+      if(roomOf(e)){
+        var Tw=TYPES[e.type];addWave(g,e,e.x,Tw.sill+Tw.h/2,e.z);
         var T0=TYPES[e.type],hit0=new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.6,(e.w||T0.w)/2),8,6),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
         hit0.position.set(e.x,T0.sill+T0.h/2,e.z);hit0.userData={ent:e.id};g.add(hit0);pickables.push(hit0);
       }
@@ -1230,11 +1272,8 @@ function build(){
       styleFocus(m,e);styleFocus(stem,e,true);
       var hit=new THREE.Mesh(new THREE.SphereGeometry(0.55,8,6),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
       hit.position.copy(m.position);hit.userData={ent:e.id};g.add(hit);pickables.push(hit);
-      if(s==='alarm'){
-        var ring=new THREE.Mesh(new THREE.RingGeometry(0.25,0.32,32),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:0.7,side:THREE.DoubleSide,depthWrite:false}));
-        ring.rotation.x=-Math.PI/2;ring.position.set(e.x,0.1,e.z);g.add(ring);
-        pulsers.push({m:m,ring:ring});
-      }
+      if(s==='alarm')pulsers.push({m:m,ring:null});
+      addWave(g,e,e.x,T.y,e.z);
     });
   });
   placeCam();
@@ -2234,6 +2273,8 @@ function renderHA(){
     '<div class="hacard"><b>Mémorisation des déclenchements</b>'+
       '<label class="chk"><input id="fLatchAlarm" type="checkbox"'+(cfg.latch_alarm?' checked':'')+'> Statut, compteurs et alarme : rester au niveau le plus haut atteint jusqu\'à acquittement</label>'+
       '<label class="chk"><input id="fLatchZones" type="checkbox"'+(cfg.latch_zones?' checked':'')+'> Zones : rester au niveau le plus haut atteint jusqu\'à acquittement</label>'+
+      '<label class="chk">Présence maintenue après un mouvement (min)<input id="fHold" type="number" min="1" max="720" value="'+(cfg.hold_minutes||30)+'" style="width:84px"></label>'+
+      '<p class="muted">Un détecteur de mouvement garde la pièce occupée jusqu\'à un mouvement dans une pièce voisine, ou jusqu\'à ce délai.</p>'+
       '<p class="muted">Sans mémorisation, tout revient à « ok » dès que le capteur redevient normal. L\'acquittement se fait avec le bouton « Acquitter » du panneau ou le service <span class="mono">sentinel.acknowledge</span>.</p></div>'+
     '<div class="hatw"><table class="hat"><thead><tr><th>Exposer</th><th>Entité</th><th>État actuel</th><th>Attributs</th><th>Rôle</th></tr></thead><tbody>';
   items.forEach(function(it){
@@ -2388,6 +2429,7 @@ function cfgChange(t){
     save();renderConfig();return;
   }
   if(d.haexp!==undefined){model.cfg.expose=model.cfg.expose||{};model.cfg.expose[d.haexp]=t.checked;save();renderConfig();return}
+  if(t.id==='fHold'){model.cfg.hold_minutes=Math.max(1,Math.min(720,parseInt(t.value,10)||30));save();return}
   if(t.id==='fLatchAlarm'){model.cfg.latch_alarm=t.checked;save();return}
   if(t.id==='fLatchZones'){model.cfg.latch_zones=t.checked;save();return}
   if(t.id==='fPrefix'){model.cfg.prefix=slug(t.value)||'sentinel';save();renderConfig()}

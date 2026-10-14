@@ -157,6 +157,11 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     # mémorisation jusqu'à acquittement : statut/alarme/compteurs, et zones
     cfg["cfg"]["latch_alarm"] = bool(cfg["cfg"].get("latch_alarm"))
     cfg["cfg"]["latch_zones"] = bool(cfg["cfg"].get("latch_zones"))
+    try:
+        hold = int(cfg["cfg"].get("hold_minutes", 30))
+    except (TypeError, ValueError):
+        hold = 30
+    cfg["cfg"]["hold_minutes"] = max(1, min(hold, 720))
     for mode in cfg["modes"]:
         mode.setdefault("def", "off")
         if not isinstance(mode.get("actions"), dict):
@@ -253,6 +258,54 @@ def resolve_level(mode: dict[str, Any], ent: dict[str, Any],
     if level is None:
         level = mode.get("def", "off")
     return level if level in LEVELS else "off"
+
+
+def _polygon(room: dict[str, Any]) -> list[tuple[float, float]]:
+    pts = room.get("pts")
+    if isinstance(pts, list) and len(pts) >= 3:
+        return [(float(p[0]), float(p[1])) for p in pts]
+    x, z, w, d = (float(room.get(k, 0)) for k in ("x", "z", "w", "d"))
+    return [(x, z), (x + w, z), (x + w, z + d), (x, z + d)]
+
+
+def _touching(pa: list[tuple[float, float]], pb: list[tuple[float, float]],
+              tol: float = 0.25, min_overlap: float = 0.3) -> bool:
+    """Deux polygones se touchent s'ils ont deux arêtes colinéaires qui se recouvrent."""
+    for i in range(len(pa)):
+        a1, a2 = pa[i], pa[(i + 1) % len(pa)]
+        ax, az = a2[0] - a1[0], a2[1] - a1[1]
+        length = (ax * ax + az * az) ** 0.5
+        if length < 1e-6:
+            continue
+        for j in range(len(pb)):
+            b1, b2 = pb[j], pb[(j + 1) % len(pb)]
+            bx, bz = b2[0] - b1[0], b2[1] - b1[1]
+            blen = (bx * bx + bz * bz) ** 0.5
+            if blen < 1e-6 or abs(ax * bz - az * bx) / (length * blen) > 0.03:
+                continue
+            d1 = abs(ax * (b1[1] - a1[1]) - az * (b1[0] - a1[0])) / length
+            d2 = abs(ax * (b2[1] - a1[1]) - az * (b2[0] - a1[0])) / length
+            if d1 > tol or d2 > tol:
+                continue
+            t1 = ((b1[0] - a1[0]) * ax + (b1[1] - a1[1]) * az) / length
+            t2 = ((b2[0] - a1[0]) * ax + (b2[1] - a1[1]) * az) / length
+            if min(length, max(t1, t2)) - max(0.0, min(t1, t2)) >= min_overlap:
+                return True
+    return False
+
+
+def adjacent_room_ids(config: dict[str, Any], room_id: str) -> set[str]:
+    """Pièces ou zones du même étage qui partagent un bord avec la pièce donnée."""
+    rooms = config.get("rooms", [])
+    base = next((r for r in rooms if r.get("id") == room_id), None)
+    if base is None:
+        return set()
+    poly = _polygon(base)
+    return {
+        r["id"] for r in rooms
+        if r.get("id") != room_id and r.get("floor") == base.get("floor")
+        and _touching(poly, _polygon(r))
+    }
 
 
 def entity_key(ent: dict[str, Any]) -> str:
@@ -428,7 +481,8 @@ def structure_signature(config: dict[str, Any]) -> str:
     import json
 
     # les options de mémorisation n'ont aucun effet sur les entités créées
-    cfg = {k: v for k, v in config["cfg"].items() if not k.startswith("latch_")}
+    cfg = {k: v for k, v in config["cfg"].items()
+           if not k.startswith("latch_") and k != "hold_minutes"}
     return json.dumps(
         [
             cfg,

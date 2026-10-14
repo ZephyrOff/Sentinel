@@ -245,7 +245,7 @@ def test_snapshot_shape():
     hass.set("binary_sensor.fumee", "on")
     snap = engine.snapshot()
     assert snap["mode_id"] == "off" and snap["counts"]["critical"] == 1
-    assert snap["ents"]["e2"] == {"state": "on", "on": True, "level": "critical", "latched": "critical"}
+    assert snap["ents"]["e2"] == {"state": "on", "on": True, "level": "critical", "latched": "critical", "held": False}
     assert engine.zone_status("r1") == ("ok", 0) or engine.zone_status("r1")[0] in ("ok", "critical")
 
 
@@ -339,6 +339,63 @@ def test_pending_entry_and_exit_delay_visible_in_snapshot():
     assert snap["grace"] > 0
     assert snap["ents"]["e1"]["pending_kind"] == "exit"
     assert snap["ents"]["e1"]["pending"] > 30
+
+
+def _motion_house():
+    """Deux pièces voisines (Salon | Cuisine) avec un détecteur de mouvement chacune."""
+    hass, engine = _build()
+    cfg = engine.config
+    cfg["rooms"] = [
+        {"id": "r1", "floor": "f0", "name": "Salon", "x": 0, "z": 0, "w": 5, "d": 5},
+        {"id": "r2", "floor": "f0", "name": "Cuisine", "x": 5, "z": 0, "w": 4, "d": 5},
+        {"id": "r3", "floor": "f0", "name": "Garage", "x": 20, "z": 0, "w": 4, "d": 5},
+    ]
+    cfg["ents"] = [
+        {"id": "m1", "name": "Mvt salon", "type": "motion", "floor": "f0",
+         "entity": "binary_sensor.m1", "x": 2, "z": 2},
+        {"id": "m2", "name": "Mvt cuisine", "type": "motion", "floor": "f0",
+         "entity": "binary_sensor.m2", "x": 7, "z": 2},
+        {"id": "m3", "name": "Mvt garage", "type": "motion", "floor": "f0",
+         "entity": "binary_sensor.m3", "x": 22, "z": 2},
+    ]
+    cfg["modes"][1]["def"] = "critical"
+    for ent_id in ("m1", "m2", "m3"):
+        hass.states_map["binary_sensor." + ent_id] = _State("off")
+    engine.async_set_mode("away")
+    return hass, engine
+
+
+def test_motion_presence_is_held_until_neighbour_motion():
+    hass, engine = _motion_house()
+    hass.set("binary_sensor.m1", "on")
+    hass.set("binary_sensor.m1", "off")          # le capteur ne voit plus personne
+    snap = engine.snapshot()["ents"]["m1"]
+    assert snap["on"] is True and snap["held"] is True   # mais la présence est maintenue
+    # mouvement dans la pièce voisine : la personne a changé de pièce
+    hass.set("binary_sensor.m2", "on")
+    assert engine.snapshot()["ents"]["m1"]["on"] is False
+    assert engine.snapshot()["ents"]["m1"]["held"] is False
+
+
+def test_motion_hold_ignores_non_adjacent_rooms_and_mode_change():
+    hass, engine = _motion_house()
+    hass.set("binary_sensor.m1", "on")
+    hass.set("binary_sensor.m1", "off")
+    hass.set("binary_sensor.m3", "on")           # garage : pas voisin du salon
+    assert engine.snapshot()["ents"]["m1"]["on"] is True
+    engine.async_set_mode("off")                 # changer de mode repart de zéro
+    assert engine.snapshot()["ents"]["m1"]["on"] is False
+
+
+def test_adjacent_rooms_for_polygons():
+    from sentinel import logic as lg
+    cfg = {"rooms": [
+        {"id": "a", "floor": "f0", "pts": [[0, 0], [4, 0], [4, 4], [0, 4]]},
+        {"id": "b", "floor": "f0", "pts": [[4, 1], [8, 1], [8, 3], [4, 3]]},
+        {"id": "c", "floor": "f0", "pts": [[4, 4], [8, 4], [8, 8], [4, 8]]},   # coin seulement
+        {"id": "d", "floor": "f1", "pts": [[0, 0], [4, 0], [4, 4], [0, 4]]},   # autre étage
+    ]}
+    assert lg.adjacent_room_ids(cfg, "a") == {"b"}
 
 
 if __name__ == "__main__":
