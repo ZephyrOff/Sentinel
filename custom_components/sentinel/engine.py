@@ -91,6 +91,8 @@ class SentinelEngine:
         # détecteurs de mouvement acquittés : on attend une nouvelle détection (retour
         # à « off » puis « on ») avant de les réarmer, au lieu de reprendre la même
         self._rearm: set[str] = set()
+        # zone quittée : désactivation différée quand un mouvement apparaît dans une zone voisine
+        self._handoff_timers: dict[str, CALLBACK_TYPE] = {}
         self._hold_timers: dict[str, CALLBACK_TYPE] = {}
         self._signature = ""
 
@@ -125,7 +127,7 @@ class SentinelEngine:
             self._unsub_states()
             self._unsub_states = None
         for timers in (self._delay_timers, self._repeat_timers, self._hold_timers,
-                       self._silence_timers):
+                       self._silence_timers, self._handoff_timers):
             for cancel in timers.values():
                 cancel()
             timers.clear()
@@ -216,6 +218,7 @@ class SentinelEngine:
         if not raw:
             return
         ent_id = ent["id"]
+        self._cancel_handoff(ent_id)          # nouveau mouvement ici : la zone reste occupée
         self._hold[ent_id] = dt_util.utcnow()
         old = self._hold_timers.pop(ent_id, None)
         if old:
@@ -232,12 +235,62 @@ class SentinelEngine:
         )
         room = room_of(self.config, ent)
         near = adjacent_room_ids(self.config, room["id"]) if room else set()
+        delay = self._handoff_delay()
         for other in self.config["ents"]:
-            if other.get("id") == ent_id or other.get("id") not in self._hold:
+            oid = other.get("id")
+            if oid == ent_id or other.get("type") != "motion":
                 continue
             orm = room_of(self.config, other)
-            if orm and orm.get("id") in near:
-                self._release_hold(other["id"])
+            if not orm or orm.get("id") not in near:
+                continue
+            active = (oid in self._hold or self._raw_on(other)
+                      or oid in self._triggered or oid in self._pending)
+            if active:
+                self._schedule_handoff(oid, delay)
+
+    # -- zone quittée --
+    def _handoff_delay(self) -> int:
+        try:
+            value = int(current_mode(self.config).get("handoffDelay", 10))
+        except (TypeError, ValueError):
+            value = 10
+        return max(0, min(value, 3600))
+
+    def _schedule_handoff(self, ent_id: str, seconds: int) -> None:
+        if ent_id in self._handoff_timers:
+            return                            # déjà programmé : le premier mouvement compte
+        if seconds <= 0:
+            self._handoff(ent_id)
+            return
+
+        @callback
+        def _fire(_now: datetime) -> None:
+            self._handoff_timers.pop(ent_id, None)
+            self._handoff(ent_id)
+            self._notify()
+
+        self._handoff_timers[ent_id] = async_call_later(self.hass, seconds, _fire)
+
+    def _cancel_handoff(self, ent_id: str) -> None:
+        cancel = self._handoff_timers.pop(ent_id, None)
+        if cancel:
+            cancel()
+
+    def _handoff(self, ent_id: str) -> None:
+        """La personne est passée dans la zone voisine : cette zone n'est plus occupée,
+        même si son détecteur reste « on » (longue temporisation d'extinction)."""
+        ent = next((e for e in self.config["ents"] if e["id"] == ent_id), None)
+        if ent is None:
+            return
+        if self._raw_on(ent):
+            self._rearm.add(ent_id)           # on attend une nouvelle détection
+        self._hold.pop(ent_id, None)
+        cancel = self._hold_timers.pop(ent_id, None)
+        if cancel:
+            cancel()
+        self._on_since.pop(ent_id, None)
+        self._cancel_timers(ent_id)
+        self._evaluate(ent, silent=False)     # retour à la normale si elle était déclenchée
 
     def _release_hold(self, ent_id: str) -> None:
         if self._hold.pop(ent_id, None) is None:
@@ -491,6 +544,9 @@ class SentinelEngine:
         self._acked.clear()
         self._clear_silences()
         self._rearm.clear()
+        for cancel in self._handoff_timers.values():
+            cancel()
+        self._handoff_timers.clear()
         self._clear_holds()
         self._log(f"Mode « {mode.get('name', '')} » activé")
         note, _cfg = self._react("enter", None, None, mode, "")

@@ -359,6 +359,7 @@ def _motion_house():
          "entity": "binary_sensor.m3", "x": 22, "z": 2},
     ]
     cfg["modes"][1]["def"] = "critical"
+    cfg["modes"][1]["handoffDelay"] = 0          # relais immédiat sauf test dédié
     for ent_id in ("m1", "m2", "m3"):
         hass.states_map["binary_sensor." + ent_id] = _State("off")
     engine.async_set_mode("away")
@@ -457,6 +458,35 @@ def test_acknowledge_motion_resets_zone_presence():
     assert engine.async_acknowledge("binary_sensor.m1") is True
     assert engine.snapshot()["ents"]["m4"]["held"] is False        # zone remise à zéro
     assert engine.snapshot()["ents"]["m4"]["on"] is False
+
+
+def test_zone_left_is_deactivated_after_delay_even_if_sensor_stays_on():
+    hass, engine = _motion_house()
+    engine.config["modes"][1]["handoffDelay"] = 20
+    hass.set("binary_sensor.m1", "on")             # reste « on » : longue temporisation
+    assert engine.snapshot()["ents"]["m1"]["pending_kind"] == "entry"
+    hass.set("binary_sensor.m2", "on")             # mouvement dans la pièce voisine
+    assert engine.snapshot()["ents"]["m1"]["pending_kind"] == "entry"   # pas encore
+    timer = [t for t in _Timers.calls if not t["cancelled"] and abs(t["delay"] - 20) < 1][-1]
+    timer["action"](None)
+    snap = engine.snapshot()["ents"]["m1"]
+    assert "pending" not in snap and snap["level"] == ""     # ancienne zone désactivée
+    assert engine.snapshot()["ents"]["m2"]["pending_kind"] == "entry"
+    # le salon détecte de nouveau : il redevient actif
+    hass.set("binary_sensor.m1", "off")
+    hass.set("binary_sensor.m1", "on")
+    assert engine.snapshot()["ents"]["m1"]["pending_kind"] == "entry"
+
+
+def test_new_motion_cancels_pending_handoff():
+    hass, engine = _motion_house()
+    engine.config["modes"][1]["handoffDelay"] = 20
+    hass.set("binary_sensor.m1", "on")
+    hass.set("binary_sensor.m2", "on")
+    hass.set("binary_sensor.m1", "off")
+    hass.set("binary_sensor.m1", "on")             # mouvement de nouveau dans l'ancienne zone
+    timer = [t for t in _Timers.calls if abs(t["delay"] - 20) < 1][0]
+    assert timer["cancelled"] is True
 
 
 if __name__ == "__main__":

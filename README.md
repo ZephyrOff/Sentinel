@@ -17,6 +17,7 @@ qu'elle prend quand elle se déclenche : `off`, `info`, `warning` ou `critical`.
 - **Notifications par niveau et par mode**, ou propres à une zone : service `notify.*`, message avec variables, rappel périodique, notification à l'activation du mode et au retour à la normale.
 - **Focus** (onglet Surveillance) : met en avant ce qui est surveillé dans le mode actif (teinte légère), le reste passe en fil de fer ; filtres par niveau et par type d'entité.
 - **Ondes de détection** (maquette 3D) : un élément déclenché émet des ondes concentriques au sol (capteurs) ou une sphère sonar (ouvertures). Plus le niveau monte, plus elles sont nombreuses et rapides ; un déclenchement en attente (délai d'entrée ou de sortie) donne une seule onde lente et ambre.
+- **Zones occupées** : un détecteur de mouvement garde sa zone occupée ; un mouvement dans une zone voisine la désactive après un délai réglable par mode (« Zone quittée »), même si le détecteur reste « on ».
 - **Actions** : à chaque évènement d'un mode (mode activé, info, warning, critical, retour à la normale), appelle des services Home Assistant (lancer un script, allumer ou éteindre une entité…), au niveau du mode ou propres à une zone.
 - **Délais** : temporisation par entité, délai d'entrée et de sortie par mode.
 - **Entités Home Assistant** pour tes automatisations (statut, compteurs, mode, alarme, zones).

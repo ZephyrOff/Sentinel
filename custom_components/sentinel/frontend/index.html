@@ -2264,6 +2264,8 @@ function settingsTab(m){
     '<label>Délai d\'entrée (s)<input type="number" min="0"'+a+' data-f="entryDelay" value="'+(m.entryDelay||0)+'"></label>'+
     '<label>Délai de sortie (s)<input type="number" min="0"'+a+' data-f="exitDelay" value="'+(m.exitDelay||0)+'"></label>'+
     '<label class="wide">Pause après acquittement d’une entité (s)<input type="number" min="0" max="3600"'+a+' data-f="ackDelay" value="'+(m.ackDelay===undefined?60:m.ackDelay)+'"></label>'+
+    '<label class="wide">Zone quittée : désactivation après un mouvement voisin (s)<input type="number" min="0" max="3600"'+a+' data-f="handoffDelay" value="'+(m.handoffDelay===undefined?10:m.handoffDelay)+'"></label>'+
+    '<p class="muted wide" style="margin:0">Quand un détecteur de mouvement voit quelqu’un dans une zone, elle reste occupée. Si un mouvement apparaît ensuite dans une zone voisine, l’ancienne zone est désactivée après ce délai, sans attendre que son détecteur retombe tout seul. 0 = immédiatement.</p>'+
     '<p class="muted wide" style="margin:0">Quand tu acquittes une entité depuis le panneau, sa détection est suspendue pendant ce délai, puis elle reprend si elle est toujours active.</p></div>'+
     '<div class="actions"><button class="btn" data-cact="dup"'+a+'>Dupliquer ce mode</button>'+
     '<button class="btn dng" data-cact="del"'+a+(model.modes.length<2?' disabled':'')+'>Supprimer ce mode</button></div>';
@@ -2428,7 +2430,7 @@ function cfgChange(t){
     save();refresh();return;
   }
   if(d.f&&m){
-    var num=d.f==='entryDelay'||d.f==='exitDelay'||d.f==='ackDelay';
+    var num=d.f==='entryDelay'||d.f==='exitDelay'||d.f==='ackDelay'||d.f==='handoffDelay';
     m[d.f]=num?Math.max(0,parseInt(t.value,10)||0):(d.f==='color'?safeColor(t.value):t.value);
     save();refresh();return;
   }
