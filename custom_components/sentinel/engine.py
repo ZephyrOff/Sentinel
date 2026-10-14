@@ -93,6 +93,9 @@ class SentinelEngine:
         self._hold: dict[str, datetime] = {}
         # demande de changement de mode en attente de validation sur un appareil de confiance
         self._mode_request: dict[str, Any] | None = None
+        # résultat de la dernière demande (validée, refusée, expirée) : les cartes l'affichent
+        self._last_request: dict[str, Any] | None = None
+        self._request_seq = 0
         self._request_timer: CALLBACK_TYPE | None = None
         self._unsub_action: CALLBACK_TYPE | None = None
         # essais de code incorrects consécutifs et verrouillage temporaire
@@ -641,6 +644,13 @@ class SentinelEngine:
             return None
         return {"mode_id": req["mode_id"], "mode": req["name"], "until": req["until"].isoformat()}
 
+    def _set_result(self, name: str, result: str) -> None:
+        self._request_seq += 1
+        self._last_request = {"seq": self._request_seq, "mode": name, "result": result}
+
+    def last_request(self) -> dict[str, Any] | None:
+        return self._last_request
+
     def _clear_request(self) -> None:
         self._mode_request = None
         if self._request_timer:
@@ -662,6 +672,7 @@ class SentinelEngine:
             self._request_timer = None
             if self._mode_request and self._mode_request["token"] == token:
                 self._mode_request = None
+                self._set_result(mode.get("name", ""), "expired")
                 self._log(f"Demande « {mode.get('name', '')} » expirée")
                 self._notify()
 
@@ -706,9 +717,11 @@ class SentinelEngine:
         self._clear_request()
         if confirm:
             self._log(f"Validé sur l'appareil : « {name} »")
+            self._set_result(name, "confirmed")
             self.async_set_mode(mode_id)
         else:
             self._log(f"Refusé sur l'appareil : « {name} »")
+            self._set_result(name, "refused")
             self._notify()
 
     @callback
@@ -985,6 +998,8 @@ class SentinelEngine:
             "total_since_reset": self.total_since_reset,
             "ents": ents,
             "latched_count": len(self._latched),
+            "request": self.request_info(),
+            "last_request": self._last_request,
             "grace": (
                 max(0, int((self._grace_until - now).total_seconds()))
                 if self._grace_until else 0

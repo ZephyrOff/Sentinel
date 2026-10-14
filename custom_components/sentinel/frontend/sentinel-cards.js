@@ -182,7 +182,7 @@
       this.shadowRoot.addEventListener("click", this._click.bind(this));
     }
     setConfig(c) { this._cfg = Object.assign({}, c || {}); this._dirty = true; this._render(); }
-    set hass(h) { this._hass = h; this._onHass && this._onHass(); this._render(); }
+    set hass(h) { this._hass = h; this._onHass && this._onHass(); if (this._watch) watchResult(this); this._render(); }
     get hass() { return this._hass; }
     getCardSize() { return 3; }
     connectedCallback() {
@@ -261,16 +261,30 @@
     var pc = mode.attributes.pending_change;
     return pc ? { name: pc.mode, left: secondsLeft(pc.until) } : null;
   }
+  /* résultat d'une demande de validation : affiché une fois, quand il change */
+  function watchResult(card) {
+    var m = find(card._hass, "mode"); if (!m) return;
+    var lr = m.attributes.last_request;
+    if (!lr) return;
+    if (card._seenSeq === undefined) { card._seenSeq = lr.seq; return; }
+    if (lr.seq === card._seenSeq) return;
+    card._seenSeq = lr.seq;
+    var txt = lr.result === "refused" ? "Changement refusé sur l’appareil"
+      : lr.result === "expired" ? "Validation expirée : le mode n’a pas changé"
+        : "Changement validé";
+    flash(card, txt + " · « " + lr.mode + " »", lr.result === "confirmed" ? "ok" : "bad");
+  }
   function noteLine(card, mode) {
     var p = pendingLeft(mode);
     if (p && p.left > 0) return '<div class="s c" style="margin-top:12px;--c:var(--s-orange)">En attente de validation sur ton appareil · « ' + esc(p.name) + ' » · ' + p.left + " s</div>";
-    if (card._flash) return '<div class="s c" style="margin-top:12px;--c:var(--s-green)">' + esc(card._flash) + "</div>";
+    if (card._flash) return '<div class="s c" style="margin-top:12px;--c:' + (card._flashKind === "bad" ? "var(--s-red)" : "var(--s-green)") + '">' + esc(card._flash) + "</div>";
     return "";
   }
-  function flash(card, text) {
+  function flash(card, text, kind) {
+    card._flashKind = kind || "ok";
     card._flash = text; card._render();
     clearTimeout(card._flashT);
-    card._flashT = setTimeout(function () { card._flash = ""; card._render(); }, 5000);
+    card._flashT = setTimeout(function () { card._flash = ""; card._flashKind = "ok"; card._render(); }, 7000);
   }
   function codeSheet(card, mode) {
     var m0 = visibleModes(card, mode).filter(function (m) { return m.id === card._asking; })[0] || { name: "" };
@@ -304,6 +318,7 @@
 
   /* ---------- statut (option show_modes : petits boutons de mode) ---------- */
   class StatusCard extends SentinelCard {
+    constructor() { super(); this._watch = true; }
     _ticks() {
       var m = find(this._hass, "mode"); if (!m) return false;
       var p = pendingLeft(m);
@@ -330,7 +345,7 @@
           return '<div class="stat' + (v ? " hit" : "") + '" style="--c:' + colorOf(x[0]) + '"><b>' + v + "</b><span>" + LV_LABEL[x[0]] + "</span></div>";
         }).join("") + "</div>";
       }
-      var bar = this._cfg.show_modes ? modeBar(this, mode, "tight") + noteLine(this, mode) : "";
+      var bar = (this._cfg.show_modes ? modeBar(this, mode, "tight") : "") + noteLine(this, mode);
       return '<ha-card class="' + (active === "ok" ? "" : "tint") + '" style="--c:' + colorOf(active) + '"><button class="row" data-a="more" style="width:100%">' +
         '<div class="ring' + (active !== "ok" ? " live" : "") + '" style="--c:' + colorOf(active) + '"><ha-icon icon="' + icon + '"></ha-icon></div>' +
         '<div class="sp"><div class="t big">' + esc(mode.state) + '</div><div class="s' + (subCol ? " c" : "") + '" style="--c:' + colorOf(subCol) + '">' + esc(sub) + "</div></div></button>" + stats + bar + "</ha-card>";
@@ -347,6 +362,7 @@
 
   /* ---------- mode ---------- */
   class ModeCard extends SentinelCard {
+    constructor() { super(); this._watch = true; }
     _ticks() {
       var m = find(this._hass, "mode"); if (!m) return false;
       var p = pendingLeft(m);
@@ -369,6 +385,7 @@
 
   /* ---------- digicode ---------- */
   class KeypadCard extends SentinelCard {
+    constructor() { super(); this._watch = true; }
     _ticks() {
       var m = find(this._hass, "mode"); var p = m && pendingLeft(m);
       return !!(p && p.left > 0);

@@ -133,7 +133,8 @@ sont retrouvées toutes seules.
 - **Validation sur un appareil de confiance** : le changement n'est appliqué que lorsque vous appuyez sur
   « Valider » dans la notification envoyée au service choisi (par exemple `notify.mobile_app_iphone`,
   application mobile Home Assistant). Délai réglable. Avec un code, le code est vérifié d'abord.
-- Les deux peuvent être combinés. Le panneau d'administration n'est pas soumis à ces contrôles.
+- Les deux peuvent être combinés. Le panneau et les cartes suivent le même parcours : fenêtre de code, puis
+  notification. Un refus ou une expiration s'affiche sur les cartes et dans le panneau.
 
 La carte plan accepte `view: 2d` ou `view: 3d` pour figer l'affichage (sans `view`, un sélecteur 2D / 3D est proposé).
 

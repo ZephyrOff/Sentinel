@@ -585,6 +585,9 @@ def test_mode_change_validated_on_trusted_device():
     reject = [c for c in hass.services.calls if c[0] == "notify"][-1][2]["data"]["actions"][1]["action"]
     hass.bus.emit("mobile_app_notification_action", {"action": reject})
     assert engine.config["mode"] == "off" and engine.request_info() is None
+    last = engine.last_request()
+    assert last["result"] == "refused" and last["mode"] == "Absence"      # visible sur les cartes
+    assert engine.snapshot()["last_request"]["seq"] == last["seq"]
 
 
 def test_code_and_confirmation_together():

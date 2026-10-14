@@ -55,6 +55,7 @@ class SentinelModeSelect(SentinelEntity, SelectEntity):
                 for m in self.engine.config["modes"]
             ],
             "pending_change": self.engine.request_info(),
+            "last_request": self.engine.last_request(),
         }
 
     async def async_select_option(self, option: str) -> None:

@@ -195,6 +195,17 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px
 .main.wide{grid-template-columns:minmax(0,1fr)}
 .main.wide .side{display:none}
 /* mode intégré dans une carte : uniquement la maquette 3D, sans en-tête ni panneaux */
+/* fenêtre de code et message éphémère */
+.dlg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:50;padding:16px}
+.dlgbox{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px;width:min(340px,100%);display:flex;flex-direction:column;gap:10px;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+.dlgbox h3{margin:0;font-size:17px}
+.dlgbox p{margin:0;color:var(--muted)}
+.dlgbox input{background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:12px;font-size:22px;letter-spacing:.4em;text-align:center;color:var(--fg)}
+.dlgmsg{min-height:18px;color:var(--alarm);font-size:13px;text-align:center}
+.dlgrow{display:flex;gap:8px;justify-content:flex-end}
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:500;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:60;max-width:calc(100vw - 32px);text-align:center}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+#toast.bad{background:var(--alarm);color:#fff}
 body.embed header,body.embed .side,body.embed .log,body.embed .ov.br{display:none}
 body.embed .app{grid-template-rows:minmax(0,1fr)}
 body.embed .main{grid-template-columns:minmax(0,1fr)}
@@ -443,6 +454,7 @@ details.help p{margin:8px 0;color:var(--muted);font-size:13px;max-width:75ch}
     </div>
     <div class="pill" id="status"><i></i><span>Tout est calme</span></div>
     <span class="pill warn" id="graceNote" hidden></span>
+    <span class="pill warn" id="reqNote" hidden></span>
     <button class="btn" id="ackBtn" hidden title="Efface les déclenchements mémorisés et coupe les rappels">Acquitter</button>
   </header>
 
@@ -497,7 +509,7 @@ var API=(function(){
   a.save=function(model){a.pending=model;clearTimeout(a.timer);a.timer=setTimeout(a._send,500)};
   a.ack=function(){return a._send().then(function(){return a.hass.callService('sentinel','acknowledge',{})})};
   a.ackEntity=function(ref){return a._send().then(function(){return a.hass.callService('sentinel','acknowledge',{entity_id:ref})})};
-  a.setMode=function(id){return a._send().then(function(){return a.hass.callWS({type:'sentinel/set_mode',mode:id})})};
+  a.setMode=function(id,code){var d={mode:id};if(code)d.code=code;return a._send().then(function(){return a.hass.callService('sentinel','set_mode',d)})};
   a.setCode=function(code,mode){var q={type:'sentinel/set_code',code:code};if(mode)q.mode=mode;return a.hass.callWS(q)};
   a.subscribe=function(cb){return a.hass.connection.subscribeMessage(cb,{type:'sentinel/subscribe'})};
   a.moreInfo=function(entityId){
@@ -888,6 +900,47 @@ function entFields(e){
 }
 
 /* ---------- header ---------- */
+/* ---------- changement de mode : code et validation sur appareil, comme dans les cartes ---------- */
+function modeSecurity(m){
+  var cfg=model.cfg||{};
+  return {code:!!(m.needCode&&(m.code_set||cfg.code_set)),confirm:!!(m.needConfirm&&(m.confirmTarget||cfg.confirm_target))};
+}
+function toast(text,bad){
+  var el=document.getElementById('toast');
+  if(!el){el=document.createElement('div');el.id='toast';el.setAttribute('role','status');document.body.appendChild(el)}
+  el.textContent=text;el.className=bad?'bad show':'show';
+  clearTimeout(toast._t);toast._t=setTimeout(function(){el.className=''},6000);
+}
+function askCode(m,onSubmit){
+  var old=document.getElementById('codeDlg');if(old)old.remove();
+  var d=document.createElement('div');d.id='codeDlg';d.className='dlg';
+  d.innerHTML='<div class="dlgbox" role="dialog" aria-modal="true" aria-label="Code d’armement"><h3>Activer « '+esc(m.name)+' »</h3>'+
+    '<p>Saisis le code d’armement.</p><input id="dlgCode" type="password" inputmode="numeric" autocomplete="off" maxlength="12">'+
+    '<div id="dlgMsg" class="dlgmsg"></div><div class="dlgrow"><button class="btn" id="dlgNo">Annuler</button><button class="btn pri" id="dlgYes">Valider</button></div></div>';
+  document.body.appendChild(d);
+  var inp=d.querySelector('#dlgCode'),msg=d.querySelector('#dlgMsg'),busy=false;
+  inp.focus();
+  function close(){d.remove()}
+  function go(){
+    if(busy||!inp.value)return;
+    busy=true;msg.textContent='';
+    onSubmit(inp.value).then(close).catch(function(e){busy=false;inp.value='';msg.textContent=(e&&e.message)||'Code incorrect';inp.focus()});
+  }
+  d.querySelector('#dlgYes').addEventListener('click',go);
+  d.querySelector('#dlgNo').addEventListener('click',close);
+  inp.addEventListener('keydown',function(ev){if(ev.key==='Enter')go();if(ev.key==='Escape')close()});
+  d.addEventListener('click',function(ev){if(ev.target===d)close()});
+}
+function requestMode(id){
+  var m=modeById(id);if(!m||id===model.mode)return;
+  var sec=modeSecurity(m);
+  function done(){if(sec.confirm)toast('Validation envoyée sur ton appareil · « '+m.name+' »')}
+  if(sec.code){
+    askCode(m,function(code){return API.setMode(id,code).then(done)});
+    return;
+  }
+  API.setMode(id).then(done).catch(function(e){toast((e&&e.message)||'Changement refusé',true)});
+}
 function renderHeader(){
   var cm=curMode();
   $('#armTabs').innerHTML=model.modes.map(function(m){
@@ -897,6 +950,8 @@ function renderHeader(){
   p.className='pill'+(c.critical?' alarm':c.warning?' warn':c.info?' info':'');
   p.querySelector('span').textContent=c.critical?'Critical · '+c.critical:c.warning?'Warning · '+c.warning:c.info?'Info · '+c.info:'Tout est calme';
   document.querySelectorAll('#viewTabs button').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.view===ui.view))});
+  var rn=$('#reqNote'),rq=live&&live.request,rl=rq?Math.max(0,Math.ceil((new Date(rq.until).getTime()-Date.now())/1000)):0;
+  if(rn){rn.hidden=!rl;rn.textContent=rl?'Validation en attente : '+rq.mode+' · '+rl+' s':''}
   var gn=$('#graceNote'),gl=graceLeft();
   if(gn){gn.hidden=!gl;gn.textContent=gl?'Délai de sortie : '+gl+' s':''}
   var ack=$('#ackBtn');
@@ -2387,7 +2442,7 @@ function cfgAction(d){
       model.modes.push({id:ui.modeSel,name:'Nouveau mode',color:'#c28a2b',desc:'',def:'off',entryDelay:0,exitDelay:0,types:{smoke:'critical',leak:'critical'},rooms:{},ents:{},notify:nf(false,true,true)});
       break;
     case 'activate':
-      if(m){model.mode=m.id;if(HA){renderHeader();API.setMode(m.id);return}logEvent('Mode « '+m.name+' » activé','');}break;
+      if(m){if(HA){requestMode(m.id);return}model.mode=m.id;logEvent('Mode « '+m.name+' » activé','');}break;
     case 'dup':
       if(m){var c=JSON.parse(JSON.stringify(m));c.id=newId('m');c.name=m.name+' (copie)';model.modes.push(c);ui.modeSel=c.id}break;
     case 'del':
@@ -2571,7 +2626,7 @@ document.addEventListener('click',function(ev){
   }
   if(t.dataset.cact){cfgAction(t.dataset);return}
   if(t.dataset.arm&&HA){
-    model.mode=t.dataset.arm;renderHeader();API.setMode(t.dataset.arm);return;
+    requestMode(t.dataset.arm);return;
   }
   if(t.dataset.arm){
     model.mode=t.dataset.arm;
@@ -2633,12 +2688,20 @@ if(!HA){
 }
 var pendTimer=null;
 function tickPending(){
-  var any=graceLeft()>0||(live&&live.ents&&model.ents.some(function(e){return pendingOf(e)||ackedOf(e)}));
+  var any=graceLeft()>0||(live&&live.request&&new Date(live.request.until).getTime()>Date.now())||(live&&live.ents&&model.ents.some(function(e){return pendingOf(e)||ackedOf(e)}));
   if(any){renderHeader();renderSide()}
   else if(pendTimer){clearInterval(pendTimer);pendTimer=null;renderHeader();renderSide()}
 }
 API.onSnapshot=function(snap){
   live=snap;live._rx=Date.now();
+  var lr=snap.last_request;
+  if(lr){
+    if(API._seq!==undefined&&lr.seq!==API._seq){
+      toast((lr.result==='refused'?'Changement refusé sur l’appareil':lr.result==='expired'?'Validation expirée : le mode n’a pas changé':'Changement validé')+' · « '+lr.mode+' »',lr.result!=='confirmed');
+    }
+    API._seq=lr.seq;
+  }else if(API._seq===undefined)API._seq=0;
+  if(snap.request&&!pendTimer)pendTimer=setInterval(tickPending,1000);
   if(!pendTimer&&(snap.grace||Object.keys(snap.ents||{}).some(function(k){return snap.ents[k].pending||snap.ents[k].acked})))pendTimer=setInterval(tickPending,1000);
   if(snap.mode_id&&modeById(snap.mode_id))model.mode=snap.mode_id;
   model.ents.forEach(function(e){var x=snap.ents[e.id];e.on=!!(x&&x.on)});
