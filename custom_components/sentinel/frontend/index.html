@@ -91,6 +91,8 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px
 .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .chip.ghost{color:var(--muted)}
 .chip.ghost[aria-pressed="true"]{color:var(--accent-fg)}
+.ent.s-pending .g{border-style:dashed;border-color:var(--warn);color:var(--warn)}
+.ent.s-pending .st{color:var(--warn)}
 .lvchip{display:inline-flex;align-items:center;gap:6px}
 .lvchip .dot{margin:0}
 .lvchip[aria-pressed="true"]{background:var(--surface);color:var(--fg);border-color:var(--fg)}
@@ -426,6 +428,7 @@ details.help p{margin:8px 0;color:var(--muted);font-size:13px;max-width:75ch}
       <div class="seg armed" id="armTabs" role="group" aria-label="Mode d'alarme"></div>
     </div>
     <div class="pill" id="status"><i></i><span>Tout est calme</span></div>
+    <span class="pill warn" id="graceNote" hidden></span>
     <button class="btn" id="ackBtn" hidden title="Efface les déclenchements mémorisés et coupe les rappels">Acquitter</button>
   </header>
 
@@ -783,6 +786,17 @@ var RANK={idle:0,sense:1,active:2,alarm:3};
 function worst(list){return list.reduce(function(a,e){var s=sev(e);return RANK[s]>RANK[a]?s:a},'idle')}
 function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim()}
 function sevVar(s){return s==='alarm'?'--alarm':s==='active'?'--warn':s==='sense'?'--accent':'--idle'}
+/* déclenchement différé par un délai de sortie ou d'entrée : secondes restantes, calculées en local depuis le dernier instantané */
+function pendingOf(e){
+  if(!HA||!live||!live.ents)return null;
+  var x=live.ents[e.id];if(!x||!x.pending)return null;
+  var left=Math.ceil(x.pending-(Date.now()-(live._rx||Date.now()))/1000);
+  return left>0?{s:left,kind:x.pending_kind}:null;
+}
+function graceLeft(){
+  if(!HA||!live||!live.grace)return 0;
+  return Math.max(0,Math.ceil(live.grace-(Date.now()-(live._rx||Date.now()))/1000));
+}
 function stateText(e){
   // en mode HA, on distingue « fermé » d'une entité absente ou indisponible
   if(HA&&live&&e.entity){
@@ -853,6 +867,8 @@ function renderHeader(){
   p.className='pill'+(c.critical?' alarm':c.warning?' warn':c.info?' info':'');
   p.querySelector('span').textContent=c.critical?'Critical · '+c.critical:c.warning?'Warning · '+c.warning:c.info?'Info · '+c.info:'Tout est calme';
   document.querySelectorAll('#viewTabs button').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.view===ui.view))});
+  var gn=$('#graceNote'),gl=graceLeft();
+  if(gn){gn.hidden=!gl;gn.textContent=gl?'Délai de sortie : '+gl+' s':''}
   var ack=$('#ackBtn');
   if(ack)ack.hidden=!(HA&&live&&(c.total>0||(latchOn()&&live.latched_count>0)));
 }
@@ -895,7 +911,9 @@ function renderSide(){
 function entRow(e,editing){
   var s=sev(e),cls=s==='alarm'?'s-alarm':s==='active'?'s-active':s==='sense'?'s-sense':'';
   var sel=ui.sel&&ui.sel.kind==='ent'&&ui.sel.id===e.id?' sel':'';
-  return '<button class="ent '+cls+sel+'" data-ent="'+e.id+'" title="'+(editing?'Sélectionner':(HA?'Ouvrir l\'entité':'Cliquer pour simuler un changement d\'état'))+'"><span class="g">'+TYPES[e.type].g+'</span><span class="nm">'+esc(e.name)+'</span><span class="st">'+(editing?TYPES[e.type].label:(HA&&!e.entity?'non lié':stateText(e))+(e.on&&levelInfo(e).level==='off'?' · ignoré':''))+'</span></button>';
+  var pd=editing?null:pendingOf(e);
+  if(pd)cls+=' s-pending';
+  return '<button class="ent '+cls+sel+'" data-ent="'+e.id+'" title="'+(editing?'Sélectionner':(HA?'Ouvrir l\'entité':'Cliquer pour simuler un changement d\'état'))+'"><span class="g">'+TYPES[e.type].g+'</span><span class="nm">'+esc(e.name)+'</span><span class="st">'+(editing?TYPES[e.type].label:(HA&&!e.entity?'non lié':stateText(e))+(e.on&&levelInfo(e).level==='off'?' · ignoré':'')+(pd?' · '+(pd.kind==='exit'?'délai de sortie':'délai d\'entrée')+' '+pd.s+' s':''))+'</span></button>';
 }
 function renderLog(){
   $('#log').innerHTML=journal.map(function(j){return '<li class="'+(j.lv?'lv-'+j.lv:'')+'"><time>'+j.t+'</time><span>'+esc(j.text)+(j.note?'<small class="note">→ '+esc(j.note.target)+' : '+esc(j.note.msg)+'</small>':'')+'</span></li>'}).join('');
@@ -2499,8 +2517,15 @@ if(!HA){
   var tag=document.createElement('span');tag.className='tag';tag.textContent='Démo';
   document.querySelector('.brand').appendChild(tag);
 }
+var pendTimer=null;
+function tickPending(){
+  var any=graceLeft()>0||(live&&live.ents&&model.ents.some(function(e){return pendingOf(e)}));
+  if(any){renderHeader();renderSide()}
+  else if(pendTimer){clearInterval(pendTimer);pendTimer=null;renderHeader();renderSide()}
+}
 API.onSnapshot=function(snap){
-  live=snap;
+  live=snap;live._rx=Date.now();
+  if(!pendTimer&&(snap.grace||Object.keys(snap.ents||{}).some(function(k){return snap.ents[k].pending})))pendTimer=setInterval(tickPending,1000);
   if(snap.mode_id&&modeById(snap.mode_id))model.mode=snap.mode_id;
   model.ents.forEach(function(e){var x=snap.ents[e.id];e.on=!!(x&&x.on)});
   lastTrigger=snap.last_trigger||null;

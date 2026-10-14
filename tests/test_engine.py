@@ -324,6 +324,23 @@ def test_zone_reaction_can_add_to_mode():
     assert ("light", "turn_on", "light.global") in targets
 
 
+def test_pending_entry_and_exit_delay_visible_in_snapshot():
+    hass, engine = _build()
+    engine.async_set_mode("away")          # entryDelay 30 s sur critical
+    hass.set("binary_sensor.fenetre", "on")
+    ent = engine.snapshot()["ents"]["e1"]
+    assert ent["level"] == "" and ent["pending_kind"] == "entry" and 1 <= ent["pending"] <= 31
+    # délai de sortie : la fenêtre est déjà ouverte quand on arme
+    hass2, engine2 = _build()
+    hass2.set("binary_sensor.fenetre", "on")
+    engine2.config["modes"][1]["exitDelay"] = 60
+    engine2.async_set_mode("away")
+    snap = engine2.snapshot()
+    assert snap["grace"] > 0
+    assert snap["ents"]["e1"]["pending_kind"] == "exit"
+    assert snap["ents"]["e1"]["pending"] > 30
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for fn in tests:

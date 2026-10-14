@@ -78,6 +78,8 @@ class SentinelEngine:
         # id entité -> pire niveau atteint depuis le dernier acquittement
         # (affiché dans le statut / l'alarme / les zones si la mémorisation est activée)
         self._latched: dict[str, str] = {}
+        # id entité -> {"until": datetime, "kind": "exit" | "entry"} : déclenchement en attente
+        self._pending: dict[str, dict[str, Any]] = {}
         self._signature = ""
 
     # ------------------------------------------------------------------ #
@@ -195,6 +197,7 @@ class SentinelEngine:
             self._evaluate(ent, silent=silent)
 
     def _cancel_timers(self, ent_id: str) -> None:
+        self._pending.pop(ent_id, None)
         for timers in (self._delay_timers, self._repeat_timers):
             cancel = timers.pop(ent_id, None)
             if cancel:
@@ -222,10 +225,15 @@ class SentinelEngine:
         now = dt_util.utcnow()
         since = self._on_since.setdefault(ent_id, now)
         remaining = effective_delay(mode, ent, level) - (now - since).total_seconds()
+        kind = "entry"
         if self._grace_until and now < self._grace_until:
-            remaining = max(remaining, (self._grace_until - now).total_seconds())
+            grace_left = (self._grace_until - now).total_seconds()
+            if grace_left >= remaining:
+                kind = "exit"
+            remaining = max(remaining, grace_left)
 
         if remaining > 0 and not silent:
+            self._pending[ent_id] = {"until": now + timedelta(seconds=remaining), "kind": kind}
             self._schedule_recheck(ent_id, remaining)
             return
         if previous == level:
@@ -482,9 +490,19 @@ class SentinelEngine:
                     status = level
         return status, n
 
+    def _pending_info(self, ent_id: str, now: datetime) -> dict[str, Any]:
+        pending = self._pending.get(ent_id)
+        if not pending:
+            return {}
+        left = (pending["until"] - now).total_seconds()
+        if left <= 0:
+            return {}
+        return {"pending": int(left) + 1, "pending_kind": pending["kind"]}
+
     def snapshot(self) -> dict[str, Any]:
         mode = current_mode(self.config)
         ents: dict[str, Any] = {}
+        now = dt_util.utcnow()
         for ent in self.config["ents"]:
             entity_id = entity_key(ent)
             state = self.hass.states.get(entity_id) if entity_id else None
@@ -493,6 +511,8 @@ class SentinelEngine:
                 "on": self._is_on(ent),
                 "level": self._triggered.get(ent["id"], ""),
                 "latched": self._latched.get(ent["id"], ""),
+                # déclenchement différé par un délai de sortie ou d'entrée
+                **self._pending_info(ent["id"], now),
             }
         return {
             "mode_id": mode.get("id"),
@@ -502,6 +522,10 @@ class SentinelEngine:
             "total_since_reset": self.total_since_reset,
             "ents": ents,
             "latched_count": len(self._latched),
+            "grace": (
+                max(0, int((self._grace_until - now).total_seconds()))
+                if self._grace_until else 0
+            ),
             "journal": self.journal,
         }
 
