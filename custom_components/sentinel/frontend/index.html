@@ -1064,16 +1064,16 @@ function styleFocus(obj,e,isStem){
     return;
   }
   if(sev(e)!=='idle')return;
-  // teinte adoucie : le niveau est suggéré, il ne crie pas
-  var c=new THREE.Color(css(sevVar(LV2SEV[st.level]||'idle'))).lerp(new THREE.Color(css('--idle')),0.4);
+  // teinte franche mais pas saturée : le corps est nuancé, les arêtes portent la couleur du niveau
+  var c=new THREE.Color(css(sevVar(LV2SEV[st.level]||'idle'))).lerp(new THREE.Color(css('--idle')),0.12);
   var edges=[];
   obj.traverse(function(o){
     if(!o.isMesh||o.userData.ent||!o.material)return;
-    if(o.material.color)o.material.color.lerp(c,0.2);
+    if(o.material.color)o.material.color.lerp(c,0.55);
     if(!o.material.transparent||o.material.opacity>0.6)edges.push(o);
   });
   edges.forEach(function(o){
-    var ln=new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry),new THREE.LineBasicMaterial({color:c,transparent:true,opacity:0.5}));
+    var ln=new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry),new THREE.LineBasicMaterial({color:c,transparent:true,opacity:0.95}));
     o.add(ln);
   });
 }
