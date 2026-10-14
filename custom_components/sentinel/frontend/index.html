@@ -135,6 +135,13 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px
 #plan text.el{font-size:.24px;fill:var(--muted);text-anchor:middle}
 #plan .rn,#plan .rs{text-anchor:middle}
 .tpl{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.secure{border:1px solid var(--line);border-radius:10px;padding:10px 14px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.secure legend{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:0 6px}
+.secure label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.secure label.chk{flex-direction:row;font-size:14px;color:var(--fg)}
+.secure input:not([type=checkbox]){background:var(--surface2);border:1px solid var(--line);border-radius:7px;padding:6px 8px;color:var(--fg);min-width:0}
+.secure .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:860px){.secure .two{grid-template-columns:1fr}}
 #plan .pfurn rect{fill:var(--surface2);stroke:var(--idle);stroke-width:1.5;vector-effect:non-scaling-stroke;cursor:grab}
 #plan .pfurn .fr{fill:none;stroke:var(--fg);stroke-width:3;vector-effect:non-scaling-stroke;pointer-events:none}
 #plan .pfurn text{font-family:var(--font-mono);font-size:.26px;font-weight:500;text-anchor:middle;dominant-baseline:central}
@@ -187,6 +194,12 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px
 .log .note{display:block;color:var(--muted);font-weight:400;font-family:var(--font-mono);font-size:11.5px}
 .main.wide{grid-template-columns:minmax(0,1fr)}
 .main.wide .side{display:none}
+/* mode intégré dans une carte : uniquement la maquette 3D, sans en-tête ni panneaux */
+body.embed header,body.embed .side,body.embed .log,body.embed .ov.br{display:none}
+body.embed .app{grid-template-rows:minmax(0,1fr)}
+body.embed .main{grid-template-columns:minmax(0,1fr)}
+body.embed .stage{grid-template-rows:minmax(0,1fr)}
+body.embed #ovFloors{top:8px;left:8px}
 #config{position:absolute;inset:0;overflow:auto;background:var(--bg);padding:20px 16px 40px}
 #config h2{margin:0 0 4px;font-size:17px}
 #config p{margin:0 0 12px;color:var(--muted);max-width:75ch}
@@ -484,7 +497,8 @@ var API=(function(){
   a.save=function(model){a.pending=model;clearTimeout(a.timer);a.timer=setTimeout(a._send,500)};
   a.ack=function(){return a._send().then(function(){return a.hass.callService('sentinel','acknowledge',{})})};
   a.ackEntity=function(ref){return a._send().then(function(){return a.hass.callService('sentinel','acknowledge',{entity_id:ref})})};
-  a.setMode=function(id){return a._send().then(function(){return a.hass.callService('sentinel','set_mode',{mode:id})})};
+  a.setMode=function(id){return a._send().then(function(){return a.hass.callWS({type:'sentinel/set_mode',mode:id})})};
+  a.setCode=function(code,mode){var q={type:'sentinel/set_code',code:code};if(mode)q.mode=mode;return a.hass.callWS(q)};
   a.subscribe=function(cb){return a.hass.connection.subscribeMessage(cb,{type:'sentinel/subscribe'})};
   a.moreInfo=function(entityId){
     try{
@@ -2256,6 +2270,11 @@ function reactTab(m,kind){
   evs.forEach(function(e){h+=kind==='notif'?notifBlock(m,e[0],z):actionsBlock(m,e[0],z)});
   return h;
 }
+function notifyList(){
+  var out={};
+  try{var S=API.hass&&API.hass.services;if(S&&S.notify)Object.keys(S.notify).forEach(function(k){out['notify.'+k]=1})}catch(e){}
+  return '<datalist id="haNotify">'+Object.keys(out).sort().map(function(k){return '<option value="'+esc(k)+'">'}).join('')+'</datalist>';
+}
 function settingsTab(m){
   var a=' data-mid="'+m.id+'"',c=safeColor(m.color);
   return '<div class="sgrid"><label>Nom<input'+a+' data-f="name" value="'+esc(m.name)+'"></label>'+
@@ -2263,6 +2282,15 @@ function settingsTab(m){
     '<label class="wide">Description<input'+a+' data-f="desc" value="'+esc(m.desc||'')+'"></label>'+
     '<label>Délai d\'entrée (s)<input type="number" min="0"'+a+' data-f="entryDelay" value="'+(m.entryDelay||0)+'"></label>'+
     '<label>Délai de sortie (s)<input type="number" min="0"'+a+' data-f="exitDelay" value="'+(m.exitDelay||0)+'"></label>'+
+    '<fieldset class="wide secure"><legend>Sécurité du changement de mode</legend>'+
+      '<label class="chk"><input type="checkbox"'+a+' data-f="needCode"'+(m.needCode?' checked':'')+'> Demander un code pour activer ce mode</label>'+
+      (m.needCode?'<div class="row" style="gap:8px;flex-wrap:wrap"><label style="flex:1;min-width:150px">Code de ce mode (4 à 12 chiffres)<input id="fModeCode" type="password" inputmode="numeric" autocomplete="new-password" placeholder="'+(m.code_set?'•••• (défini)':((model.cfg&&model.cfg.code_set)?'Code par défaut utilisé':'Aucun code'))+'"></label>'+
+        '<button class="btn pri" data-cact="saveModeCode"'+a+'>Enregistrer</button>'+(m.code_set?'<button class="btn" data-cact="clearModeCode"'+a+'>Supprimer</button>':'')+'<span id="modeCodeMsg" class="muted"></span></div>':'')+
+      '<label class="chk"><input type="checkbox"'+a+' data-f="needConfirm"'+(m.needConfirm?' checked':'')+'> Valider sur un appareil de confiance (notification avec Valider / Refuser)</label>'+
+      (m.needConfirm?'<div class="two"><label>Service de notification<input class="mono"'+a+' data-f="confirmTarget" value="'+esc(m.confirmTarget||'')+'" placeholder="notify.mobile_app_…" list="haNotify"></label>'+
+        '<label>Délai de validation (s)<input type="number" min="30" max="900"'+a+' data-f="confirmTimeout" value="'+(m.confirmTimeout||120)+'"></label></div>'+
+        '<p class="muted" style="margin:0">Le changement ne s’applique que lorsque tu appuies sur « Valider » dans la notification (application mobile Home Assistant). Avec un code, il est vérifié d’abord.</p>':'')+
+    '</fieldset>'+notifyList()+
     '<label class="wide">Pause après acquittement d’une entité (s)<input type="number" min="0" max="3600"'+a+' data-f="ackDelay" value="'+(m.ackDelay===undefined?60:m.ackDelay)+'"></label>'+
     '<label class="wide">Zone quittée : désactivation après un mouvement voisin (s)<input type="number" min="0" max="3600"'+a+' data-f="handoffDelay" value="'+(m.handoffDelay===undefined?10:m.handoffDelay)+'"></label>'+
     '<p class="muted wide" style="margin:0">Quand un détecteur de mouvement voit quelqu’un dans une zone, elle reste occupée. Si un mouvement apparaît ensuite dans une zone voisine, l’ancienne zone est désactivée après ce délai, sans attendre que son détecteur retombe tout seul. 0 = immédiatement.</p>'+
@@ -2294,6 +2322,9 @@ function renderHA(){
     '<div class="hacard"><b>Mémorisation des déclenchements</b>'+
       '<label class="chk"><input id="fLatchAlarm" type="checkbox"'+(cfg.latch_alarm?' checked':'')+'> Statut, compteurs et alarme : rester au niveau le plus haut atteint jusqu\'à acquittement</label>'+
       '<label class="chk"><input id="fLatchZones" type="checkbox"'+(cfg.latch_zones?' checked':'')+'> Zones : rester au niveau le plus haut atteint jusqu\'à acquittement</label>'+
+      '<label class="chk">Code par défaut (4 à 12 chiffres)<input id="fCode" type="password" inputmode="numeric" autocomplete="new-password" placeholder="'+(cfg.code_set?'•••• (défini)':'Aucun code')+'" style="width:130px"></label>'+
+      '<div class="row" style="gap:8px"><button class="btn pri" data-cact="saveCode">Enregistrer le code</button>'+(cfg.code_set?'<button class="btn" data-cact="clearCode">Supprimer le code</button>':'')+'<span id="codeMsg" class="muted"></span></div>'+
+      '<p class="muted">Code utilisé par les modes qui demandent un code mais n’en ont pas de propre (réglé dans Modes › Réglages). Il est vérifié par Home Assistant, jamais dans le navigateur, et stocké haché.</p>'+
       '<label class="chk">Présence maintenue après un mouvement (min)<input id="fHold" type="number" min="1" max="720" value="'+(cfg.hold_minutes||30)+'" style="width:84px"></label>'+
       '<p class="muted">Un détecteur de mouvement garde la pièce occupée jusqu\'à un mouvement dans une pièce voisine, ou jusqu\'à ce délai.</p>'+
       '<p class="muted">Sans mémorisation, tout revient à « ok » dès que le capteur redevient normal. L\'acquittement se fait avec le bouton « Acquitter » du panneau ou le service <span class="mono">sentinel.acknowledge</span>.</p></div>'+
@@ -2330,6 +2361,26 @@ function renderConfig(){
 function newId(p){return p+Date.now().toString(36)+Math.floor(Math.random()*99)}
 function cfgAction(d){
   var m=d.mid?modeById(d.mid):null;
+  if(d.cact==='saveModeCode'||d.cact==='clearModeCode'){
+    var mm=modeById(d.mid),inp2=document.getElementById('fModeCode'),msg2=document.getElementById('modeCodeMsg');
+    var code2=d.cact==='clearModeCode'?'':(inp2?inp2.value.trim():'');
+    if(!HA||!mm){if(msg2)msg2.textContent='Disponible dans Home Assistant';return}
+    if(d.cact==='saveModeCode'&&!/^[0-9]{4,12}$/.test(code2)){if(msg2)msg2.textContent='Le code doit faire 4 à 12 chiffres';return}
+    API.setCode(code2,mm.id).then(function(){
+      mm.code_set=!!code2;renderConfig();var m3=document.getElementById('modeCodeMsg');if(m3)m3.textContent=code2?'Code enregistré':'Code supprimé';
+    }).catch(function(e){if(msg2)msg2.textContent=(e&&e.message)||'Erreur'});
+    return;
+  }
+  if(d.cact==='saveCode'||d.cact==='clearCode'){
+    var inp=document.getElementById('fCode'),msg=document.getElementById('codeMsg'),code=d.cact==='clearCode'?'':(inp?inp.value.trim():'');
+    if(!HA){if(msg)msg.textContent='Disponible dans Home Assistant';return}
+    if(d.cact==='saveCode'&&!/^[0-9]{4,12}$/.test(code)){if(msg)msg.textContent='Le code doit faire 4 à 12 chiffres';return}
+    API.setCode(code).then(function(){
+      model.cfg.code_set=!!code;if(inp)inp.value='';
+      renderConfig();var m2=document.getElementById('codeMsg');if(m2)m2.textContent=code?'Code enregistré':'Code supprimé';
+    }).catch(function(e){if(msg)msg.textContent=(e&&e.message)||'Erreur'});
+    return;
+  }
   switch(d.cact){
     case 'addMode':
       ui.modeSel=newId('m');
@@ -2430,9 +2481,9 @@ function cfgChange(t){
     save();refresh();return;
   }
   if(d.f&&m){
-    var num=d.f==='entryDelay'||d.f==='exitDelay'||d.f==='ackDelay'||d.f==='handoffDelay';
-    m[d.f]=num?Math.max(0,parseInt(t.value,10)||0):(d.f==='color'?safeColor(t.value):t.value);
-    save();refresh();return;
+    var num=d.f==='entryDelay'||d.f==='exitDelay'||d.f==='ackDelay'||d.f==='handoffDelay'||d.f==='confirmTimeout';
+    m[d.f]=(d.f==='needCode'||d.f==='needConfirm')?t.checked:(num?Math.max(0,parseInt(t.value,10)||0):(d.f==='color'?safeColor(t.value):t.value));
+    save();refresh();if(d.f==='needCode'||d.f==='needConfirm')renderConfig();return;
   }
   if(d.nf&&m){
     var nb=d.zone?zoneBag(m,d.zone,'notify',true):(m.notify=m.notify||{});
@@ -2605,6 +2656,7 @@ if(document.fonts&&document.fonts.ready)document.fonts.ready.then(function(){if(
 }
 
 /* ---------- démarrage ---------- */
+if(/[?&]embed=/.test(location.search))document.documentElement.classList.add('embed'),document.addEventListener('DOMContentLoaded',function(){document.body.classList.add('embed')});
 API.waitHass().then(function(h){
   if(!h){sentinelMain(null,false);return}
   API.load().then(function(r){

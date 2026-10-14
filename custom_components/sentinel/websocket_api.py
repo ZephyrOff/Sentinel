@@ -25,6 +25,8 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_config)
     websocket_api.async_register_command(hass, ws_save_config)
     websocket_api.async_register_command(hass, ws_subscribe)
+    websocket_api.async_register_command(hass, ws_set_code)
+    websocket_api.async_register_command(hass, ws_set_mode)
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sentinel/get_config"})
@@ -34,9 +36,16 @@ def ws_get_config(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
     if engine is None:
         connection.send_error(msg["id"], "not_loaded", "Sentinel n'est pas chargé")
         return
-    connection.send_result(
-        msg["id"], {"config": engine.config, "snapshot": engine.snapshot()}
-    )
+    # le code d'armement (haché) ne quitte jamais le serveur
+    config = {**engine.config, "cfg": {k: v for k, v in engine.config["cfg"].items()
+                                       if k not in ("code_hash", "code_salt")}}
+    config["cfg"]["code_set"] = engine.code_is_set()
+    config["modes"] = [
+        {**{k: v for k, v in m.items() if k not in ("code_hash", "code_salt")},
+         "code_set": bool(m.get("code_hash"))}
+        for m in engine.config["modes"]
+    ]
+    connection.send_result(msg["id"], {"config": config, "snapshot": engine.snapshot()})
 
 
 @websocket_api.require_admin
@@ -56,6 +65,37 @@ def ws_save_config(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None
             hass.config_entries.async_reload(engine.entry.entry_id)
         )
     connection.send_result(msg["id"], {"reloaded": needs_reload})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {vol.Required("type"): "sentinel/set_code", vol.Required("code"): vol.Coerce(str),
+     vol.Optional("mode"): str}
+)
+@callback
+def ws_set_code(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
+    engine = _engine(hass)
+    if engine is None:
+        connection.send_error(msg["id"], "not_loaded", "Sentinel n'est pas chargé")
+        return
+    code = msg["code"].strip()
+    if code and not (4 <= len(code) <= 12 and code.isdigit()):
+        connection.send_error(msg["id"], "invalid_code", "Le code doit faire 4 à 12 chiffres")
+        return
+    engine.async_set_code(code, msg.get("mode"))
+    connection.send_result(msg["id"], {"code_set": bool(code)})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "sentinel/set_mode", vol.Required("mode"): str})
+@callback
+def ws_set_mode(hass: HomeAssistant, connection, msg: dict[str, Any]) -> None:
+    """Changement de mode depuis le panneau (administrateur) : sans code."""
+    engine = _engine(hass)
+    if engine is None or not engine.async_set_mode(msg["mode"]):
+        connection.send_error(msg["id"], "unknown_mode", "Mode inconnu")
+        return
+    connection.send_result(msg["id"], {})
 
 
 @websocket_api.websocket_command({vol.Required("type"): "sentinel/subscribe"})

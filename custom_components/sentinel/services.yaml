@@ -9,6 +9,13 @@ set_mode:
       example: "Absence"
       selector:
         text:
+    code:
+      name: Code
+      description: Code d'armement, obligatoire pour les modes marqués « Code requis » dans le panneau.
+      required: false
+      selector:
+        text:
+          type: password
 
 acknowledge:
   name: Acquitter

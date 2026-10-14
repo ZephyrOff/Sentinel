@@ -10,6 +10,8 @@ from .const import DOMAIN
 from .engine import SentinelEngine
 from .entity import SentinelEntity
 from .logic import current_mode
+from homeassistant.exceptions import HomeAssistantError
+from .engine import CodeError
 
 
 async def async_setup_entry(
@@ -38,11 +40,25 @@ class SentinelModeSelect(SentinelEntity, SelectEntity):
     def extra_state_attributes(self) -> dict:
         mode = current_mode(self.engine.config)
         return {
+            "sentinel_key": "mode",
             "mode_id": mode.get("id"),
             "description": mode.get("desc", ""),
             "entry_delay": mode.get("entryDelay", 0),
             "exit_delay": mode.get("exitDelay", 0),
+            "grace_until": self.engine.grace_until_iso(),
+            "code_set": self.engine.code_is_set(),
+            "modes": [
+                {"id": m.get("id"), "name": m.get("name"), "color": m.get("color"),
+                 "desc": m.get("desc", ""),
+                 "need_code": self.engine.mode_needs_code(m),
+                 "need_confirm": self.engine.mode_needs_confirm(m)}
+                for m in self.engine.config["modes"]
+            ],
+            "pending_change": self.engine.request_info(),
         }
 
     async def async_select_option(self, option: str) -> None:
-        self.engine.async_set_mode(option)
+        try:
+            await self.engine.async_request_mode(option, None)
+        except CodeError as err:
+            raise HomeAssistantError(f"{err} : utilise le digicode ou le service sentinel.set_mode") from err

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
@@ -24,6 +25,8 @@ from .const import (
     SIGNAL_UPDATE,
 )
 from .logic import (
+    new_code_record,
+    verify_code,
     STATUS_RANK,
     current_mode,
     default_config,
@@ -45,6 +48,10 @@ from .logic import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class CodeError(Exception):
+    """Code d'armement manquant, incorrect ou verrouillé."""
 
 
 def _fill(template: str, values: dict[str, str]) -> str:
@@ -84,6 +91,13 @@ class SentinelEngine:
         # détecteurs de mouvement : une personne est considérée présente tant qu'aucun
         # mouvement n'est vu dans une pièce voisine (ou jusqu'à expiration)
         self._hold: dict[str, datetime] = {}
+        # demande de changement de mode en attente de validation sur un appareil de confiance
+        self._mode_request: dict[str, Any] | None = None
+        self._request_timer: CALLBACK_TYPE | None = None
+        self._unsub_action: CALLBACK_TYPE | None = None
+        # essais de code incorrects consécutifs et verrouillage temporaire
+        self._code_fails = 0
+        self._code_locked_until: datetime | None = None
         # entités acquittées individuellement : détection suspendue jusqu'à `until`
         # (durée réglable dans le mode : ackDelay)
         self._silenced: dict[str, datetime] = {}
@@ -116,6 +130,9 @@ class SentinelEngine:
         self._signature = structure_signature(self.config)
 
     async def async_start(self) -> None:
+        self._unsub_action = self.hass.bus.async_listen(
+            "mobile_app_notification_action", self._handle_action
+        )
         self._track_states()
         # Au démarrage on constate l'existant sans notifier.
         self._evaluate_all(silent=True)
@@ -123,6 +140,12 @@ class SentinelEngine:
 
     @callback
     def async_stop(self) -> None:
+        if self._unsub_action:
+            self._unsub_action()
+            self._unsub_action = None
+        if self._request_timer:
+            self._request_timer()
+            self._request_timer = None
         if self._unsub_states:
             self._unsub_states()
             self._unsub_states = None
@@ -154,7 +177,17 @@ class SentinelEngine:
     def async_set_config(self, raw: dict[str, Any]) -> bool:
         """Applique une nouvelle configuration. Retourne True si un rechargement
         de l'intégration est nécessaire (entités exposées modifiées)."""
+        previous = self.config.get("cfg") or {}
+        previous_modes = {m.get("id"): m for m in self.config.get("modes", [])}
         self.config = normalize_config(raw)
+        for mode in self.config["modes"]:
+            old = previous_modes.get(mode.get("id")) or {}
+            for key in ("code_hash", "code_salt"):
+                if old.get(key) and not mode.get(key):
+                    mode[key] = old[key]
+        for key in ("code_hash", "code_salt"):
+            if previous.get(key) and not (raw.get("cfg") or {}).get(key):
+                self.config["cfg"][key] = previous[key]
         if not (self._flag("latch_alarm") or self._flag("latch_zones")):
             self._latched.clear()
         self._save_soon()
@@ -526,6 +559,158 @@ class SentinelEngine:
     # ------------------------------------------------------------------ #
     # Actions publiques (services, entités, websocket)
     # ------------------------------------------------------------------ #
+    # -- code d'armement --
+    def code_is_set(self) -> bool:
+        return bool((self.config.get("cfg") or {}).get("code_hash"))
+
+    def _code_record(self, mode: dict[str, Any]) -> dict[str, Any] | None:
+        """Code propre au mode, sinon code global (ancienne configuration)."""
+        if mode.get("code_hash"):
+            return mode
+        cfg = self.config.get("cfg") or {}
+        return cfg if cfg.get("code_hash") else None
+
+    def mode_needs_code(self, mode: dict[str, Any]) -> bool:
+        return bool(mode.get("needCode")) and self._code_record(mode) is not None
+
+    def confirm_target(self, mode: dict[str, Any]) -> str:
+        return str(mode.get("confirmTarget") or (self.config.get("cfg") or {}).get("confirm_target") or "")
+
+    def mode_needs_confirm(self, mode: dict[str, Any]) -> bool:
+        return bool(mode.get("needConfirm")) and bool(self.confirm_target(mode))
+
+    @callback
+    def async_set_code(self, code: str, mode_id: str | None = None) -> None:
+        holder: dict[str, Any] | None
+        if mode_id:
+            holder = next((m for m in self.config["modes"] if m.get("id") == mode_id), None)
+            if holder is None:
+                return
+        else:
+            holder = self.config.setdefault("cfg", {})
+        if code:
+            holder.update(new_code_record(code))
+        else:
+            holder.pop("code_hash", None)
+            holder.pop("code_salt", None)
+        self._code_fails = 0
+        self._code_locked_until = None
+        self._save_soon()
+        self._notify()
+
+    def check_mode_code(self, ref: str, code: str | None) -> None:
+        """Lève CodeError si le mode demande un code et qu'il n'est pas valable."""
+        mode = find_mode(self.config, ref)
+        if mode is None or not self.mode_needs_code(mode):
+            return
+        record = self._code_record(mode) or {}
+        now = dt_util.utcnow()
+        if self._code_locked_until and now < self._code_locked_until:
+            left = int((self._code_locked_until - now).total_seconds()) + 1
+            raise CodeError(f"Trop d'essais, réessaie dans {left} s")
+        if verify_code(record, code):
+            self._code_fails = 0
+            return
+        self._code_fails += 1
+        if self._code_fails >= 5:
+            self._code_fails = 0
+            self._code_locked_until = now + timedelta(seconds=60)
+            raise CodeError("Trop d'essais, verrouillé 60 s")
+        raise CodeError("Code incorrect" if code else "Code requis")
+
+    # -- demande de changement de mode (code, puis validation sur un appareil de confiance) --
+    async def async_request_mode(self, ref: str, code: str | None = None) -> str:
+        """Retourne "applied", "pending" (validation attendue) ou "unknown".
+
+        Lève CodeError si le mode demande un code absent ou incorrect."""
+        mode = find_mode(self.config, ref)
+        if mode is None:
+            return "unknown"
+        if mode.get("id") == self.config.get("mode"):
+            return "applied"
+        self.check_mode_code(ref, code)
+        if self.mode_needs_confirm(mode):
+            self._start_request(mode)
+            return "pending"
+        self.async_set_mode(mode["id"])
+        return "applied"
+
+    def request_info(self) -> dict[str, Any] | None:
+        req = self._mode_request
+        if not req:
+            return None
+        return {"mode_id": req["mode_id"], "mode": req["name"], "until": req["until"].isoformat()}
+
+    def _clear_request(self) -> None:
+        self._mode_request = None
+        if self._request_timer:
+            self._request_timer()
+            self._request_timer = None
+
+    def _start_request(self, mode: dict[str, Any]) -> None:
+        self._clear_request()
+        token = secrets.token_hex(6)
+        seconds = int(mode.get("confirmTimeout") or 120)
+        target = self.confirm_target(mode)
+        self._mode_request = {
+            "token": token, "mode_id": mode["id"], "name": mode.get("name", ""),
+            "until": dt_util.utcnow() + timedelta(seconds=seconds),
+        }
+
+        @callback
+        def _expire(_now: datetime) -> None:
+            self._request_timer = None
+            if self._mode_request and self._mode_request["token"] == token:
+                self._mode_request = None
+                self._log(f"Demande « {mode.get('name', '')} » expirée")
+                self._notify()
+
+        self._request_timer = async_call_later(self.hass, seconds, _expire)
+        self._log(f"Validation demandée : « {mode.get('name', '')} »")
+        self.hass.async_create_task(self._send_confirmation(target, token, mode))
+        self._notify()
+
+    async def _send_confirmation(self, target: str, token: str, mode: dict[str, Any]) -> None:
+        domain, _, service = target.partition(".")
+        if not service or not self.hass.services.has_service(domain, service):
+            _LOGGER.warning("Service de validation introuvable : %s", target)
+            return
+        data = {
+            "title": "Sentinel",
+            "message": f"Activer le mode « {mode.get('name', '')} » ?",
+            "data": {
+                "tag": "sentinel_confirm",
+                "actions": [
+                    {"action": f"SENTINEL_CONFIRM_{token}", "title": "Valider"},
+                    {"action": f"SENTINEL_REJECT_{token}", "title": "Refuser", "destructive": True},
+                ],
+                "push": {"interruption-level": "time-sensitive"},
+            },
+        }
+        try:
+            await self.hass.services.async_call(domain, service, data, blocking=False)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Échec de l'envoi de la demande de validation vers %s", target)
+
+    @callback
+    def _handle_action(self, event: Event) -> None:
+        action = str((event.data or {}).get("action") or "")
+        req = self._mode_request
+        if not req or not action.startswith("SENTINEL_"):
+            return
+        confirm = action == f"SENTINEL_CONFIRM_{req['token']}"
+        reject = action == f"SENTINEL_REJECT_{req['token']}"
+        if not (confirm or reject) or dt_util.utcnow() > req["until"]:
+            return
+        mode_id, name = req["mode_id"], req["name"]
+        self._clear_request()
+        if confirm:
+            self._log(f"Validé sur l'appareil : « {name} »")
+            self.async_set_mode(mode_id)
+        else:
+            self._log(f"Refusé sur l'appareil : « {name} »")
+            self._notify()
+
     @callback
     def async_set_mode(self, ref: str) -> bool:
         mode = find_mode(self.config, ref)
@@ -540,6 +725,7 @@ class SentinelEngine:
         # (et notifié) selon les règles du nouveau mode, après le délai de sortie.
         for ent_id in list(self._triggered) + list(self._delay_timers):
             self._cancel_timers(ent_id)
+        self._clear_request()
         self._triggered.clear()
         self._acked.clear()
         self._clear_silences()
@@ -722,6 +908,44 @@ class SentinelEngine:
                 if STATUS_RANK[level] > STATUS_RANK[status]:
                     status = level
         return status, n
+
+    def active_items(self) -> list[dict[str, Any]]:
+        """Entités déclenchées, en cours de détection ou acquittées (pour les cartes)."""
+        now = dt_util.utcnow()
+        mode = current_mode(self.config)
+        order = {"critical": 0, "warning": 1, "info": 2}
+        items: list[dict[str, Any]] = []
+        for ent in self.config["ents"]:
+            ent_id = ent["id"]
+            room = room_of(self.config, ent)
+            status = until = None
+            level = ""
+            if ent_id in self._triggered:
+                status, level = "triggered", self._triggered[ent_id]
+            elif ent_id in self._pending:
+                status = "pending"
+                level = resolve_level(mode, ent, room)
+                until = self._pending[ent_id]["until"]
+            elif ent_id in self._silenced:
+                status, until = "acked", self._silenced[ent_id]
+                level = resolve_level(mode, ent, room)
+            if status is None:
+                continue
+            items.append({
+                "id": ent_id, "name": ent.get("name", ""), "type": ent.get("type", ""),
+                "zone": (room or {}).get("name", ""), "room_id": (room or {}).get("id", ""),
+                "entity_id": entity_key(ent), "status": status, "level": level,
+                "until": until.isoformat() if until else None,
+                "kind": (self._pending.get(ent_id) or {}).get("kind"),
+            })
+        items.sort(key=lambda i: (i["status"] != "triggered", order.get(i["level"], 3), i["name"]))
+        return items
+
+    def grace_until_iso(self) -> str | None:
+        now = dt_util.utcnow()
+        if self._grace_until and self._grace_until > now:
+            return self._grace_until.isoformat()
+        return None
 
     def _pending_info(self, ent_id: str, now: datetime) -> dict[str, Any]:
         pending = self._pending.get(ent_id)

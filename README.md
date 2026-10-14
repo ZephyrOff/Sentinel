@@ -107,9 +107,40 @@ automation:
 - Pas d'actions sortantes (sirène, lumières) : utilise les événements et le statut dans tes automatisations.
 - Le panneau utilise des modules WebGL : un navigateur récent est nécessaire.
 
+## Cartes Lovelace (style iOS)
+
+Les cartes sont chargées automatiquement avec l'intégration (aucune ressource à ajouter) et reprennent les
+variables du thème Home Assistant : elles s'accordent au thème iOS clair ou sombre. Les entités Sentinel
+sont retrouvées toutes seules.
+
+| Carte | Contenu |
+|---|---|
+| `custom:sentinel-status-card` | Mode, état global, délai de sortie ; `show_counts: true` ajoute les compteurs, `show_modes: true` les petits boutons de mode |
+| `custom:sentinel-control-card` | Statut avec petits boutons pour activer les modes (statut + `show_modes`) |
+| `custom:sentinel-mode-card` | Changer de mode ; ouvre le digicode si le mode exige un code |
+| `custom:sentinel-keypad-card` | Digicode d'armement / désarmement (`target`, `modes` en option) |
+| `custom:sentinel-zones-card` | Zones et niveau de chacune (`floor`, `entities` en option) |
+| `custom:sentinel-ack-card` | Éléments déclenchés ou en détection, acquittement par ligne ou global |
+| `custom:sentinel-chips-card` | Chips `chips: [mode, status, zones, ack]` |
+| `custom:sentinel-plan-card` | Plan 2D (par étage) et maquette 3D (`default_view: 2d` ou `3d`) |
+| `custom:sentinel-journal-card` | Derniers évènements (`max`) |
+
+**Sécurité du changement de mode** (*Modes › Réglages › Sécurité*), mode par mode :
+
+- **Code** : chaque mode peut avoir son propre code (4 à 12 chiffres, stocké haché, vérifié par Home Assistant,
+  jamais dans le navigateur). Un code par défaut (*Entités HA*) sert aux modes qui n'en ont pas. Le service
+  `sentinel.set_mode` accepte le paramètre `code` ; cinq essais incorrects verrouillent 60 s.
+- **Validation sur un appareil de confiance** : le changement n'est appliqué que lorsque vous appuyez sur
+  « Valider » dans la notification envoyée au service choisi (par exemple `notify.mobile_app_iphone`,
+  application mobile Home Assistant). Délai réglable. Avec un code, le code est vérifié d'abord.
+- Les deux peuvent être combinés. Le panneau d'administration n'est pas soumis à ces contrôles.
+
+La carte plan accepte `view: 2d` ou `view: 3d` pour figer l'affichage (sans `view`, un sélecteur 2D / 3D est proposé).
+
 ## Licence
 
 [MIT](LICENSE)
+
 
 ## Développement
 

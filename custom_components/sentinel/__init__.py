@@ -9,6 +9,10 @@ import voluptuous as vol
 from homeassistant.components import frontend, panel_custom
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, callback
+try:  # HA récent
+    from homeassistant.exceptions import ServiceValidationError
+except ImportError:  # pragma: no cover
+    from homeassistant.exceptions import HomeAssistantError as ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 
@@ -24,7 +28,7 @@ from .const import (
     URL_BASE,
     VERSION,
 )
-from .engine import SentinelEngine
+from .engine import CodeError, SentinelEngine
 from .websocket_api import async_register_websocket
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,6 +60,8 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         require_admin=True,
         config={},
     )
+    # cartes Lovelace (statut, mode, digicode, zones, acquittement, chips, plan, journal)
+    frontend.add_extra_js_url(hass, f"{URL_BASE}/sentinel-cards.js?v={VERSION}")
     hass.data[_FLAG_FRONTEND] = True
 
 
@@ -67,8 +73,13 @@ def _register_services(hass: HomeAssistant) -> None:
         return [v for v in hass.data.get(DOMAIN, {}).values() if isinstance(v, SentinelEngine)]
 
     async def _set_mode(call: ServiceCall) -> None:
+        code = call.data.get("code")
         for engine in _engines():
-            if not engine.async_set_mode(call.data["mode"]):
+            try:
+                result = await engine.async_request_mode(call.data["mode"], code)
+            except CodeError as err:
+                raise ServiceValidationError(str(err)) from err
+            if result == "unknown":
                 _LOGGER.warning("Mode inconnu : %s", call.data["mode"])
 
     async def _acknowledge(call: ServiceCall) -> None:
@@ -85,7 +96,7 @@ def _register_services(hass: HomeAssistant) -> None:
 
     hass.services.async_register(
         DOMAIN, SERVICE_SET_MODE, _set_mode,
-        schema=vol.Schema({vol.Required("mode"): str}),
+        schema=vol.Schema({vol.Required("mode"): str, vol.Optional("code"): vol.Coerce(str)}),
     )
     hass.services.async_register(
         DOMAIN, SERVICE_ACKNOWLEDGE, _acknowledge,

@@ -31,3 +31,7 @@ class SentinelAlarm(SentinelEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         return self.engine.counts()["critical"] > 0
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"sentinel_key": "alarm"}

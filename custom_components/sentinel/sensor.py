@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import DOMAIN
 from .engine import SentinelEngine
 from .entity import SentinelEntity
+from .logic import room_of
 
 STATUS_OPTIONS = ["ok", "info", "warning", "critical"]
 
@@ -45,6 +46,10 @@ class SentinelSensor(SentinelEntity, SensorEntity):
     @property
     def native_value(self) -> str | int | None:
         key, counts = self._key, self.engine.counts()
+        if key == "active":
+            return len([i for i in self.engine.active_items() if i["status"] != "acked"])
+        if key == "journal":
+            return self.engine.journal[0]["text"][:250] if self.engine.journal else "none"
         if key == "status":
             return counts["status"]
         if key == "trigger_counter":
@@ -61,15 +66,28 @@ class SentinelSensor(SentinelEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         key, counts = self._key, self.engine.counts()
+        base: dict[str, Any] = {"sentinel_key": key}
+        if key == "active":
+            return {**base, "items": self.engine.active_items()}
+        if key == "journal":
+            return {**base, "events": [
+                {"time": e.get("t"), "text": e.get("text"), "level": e.get("lv") or ""}
+                for e in self.engine.journal
+            ]}
         if key == "trigger_counter":
-            return {
+            return {**base,
                 "info": counts["info"],
                 "warning": counts["warning"],
                 "critical": counts["critical"],
                 "total_since_reset": self.engine.total_since_reset,
             }
         if key == "last_trigger":
-            return dict(self.engine.last_trigger or {})
+            return {**base, **dict(self.engine.last_trigger or {})}
         if key.startswith("zone:"):
-            return {"triggered": self.engine.zone_status(key.split(":", 1)[1])[1]}
-        return {}
+            room_id = key.split(":", 1)[1]
+            room = next((r for r in self.engine.config["rooms"] if r.get("id") == room_id), {})
+            ents = [e for e in self.engine.config["ents"] if (room_of(self.engine.config, e) or {}).get("id") == room_id]
+            return {**base, "triggered": self.engine.zone_status(room_id)[1],
+                    "room_id": room_id, "zone_name": room.get("name", ""), "floor": room.get("floor", ""),
+                    "outdoor": bool(room.get("outdoor")), "total": len(ents)}
+        return base

@@ -108,6 +108,15 @@ class _Services:
 class _Bus:
     def __init__(self) -> None:
         self.events: list[tuple] = []
+        self.listeners: dict[str, list] = {}
+
+    def async_listen(self, name, cb):
+        self.listeners.setdefault(name, []).append(cb)
+        return lambda: self.listeners[name].remove(cb)
+
+    def emit(self, name, data) -> None:
+        for cb in list(self.listeners.get(name, [])):
+            cb(types.SimpleNamespace(data=data))
 
     def async_fire(self, name, data) -> None:
         self.events.append((name, data))
@@ -487,6 +496,108 @@ def test_new_motion_cancels_pending_handoff():
     hass.set("binary_sensor.m1", "on")             # mouvement de nouveau dans l'ancienne zone
     timer = [t for t in _Timers.calls if abs(t["delay"] - 20) < 1][0]
     assert timer["cancelled"] is True
+
+
+def test_code_protects_modes_and_locks_after_failures():
+    import pytest
+    hass, engine = _build()
+    engine.config["modes"][0]["needCode"] = True       # « Désarmé » demande un code
+    engine.check_mode_code("off", None)                 # pas de code défini : aucune exigence
+    engine.async_set_code("1234")
+    assert engine.code_is_set() is True
+    CodeError = sys.modules["sentinel.engine"].CodeError
+    with pytest.raises(CodeError):
+        engine.check_mode_code("off", None)             # code requis
+    with pytest.raises(CodeError):
+        engine.check_mode_code("off", "0000")           # incorrect
+    engine.check_mode_code("away", None)                # un mode sans exigence reste libre
+    engine.check_mode_code("off", "1234")               # bon code
+    for _ in range(4):
+        with pytest.raises(CodeError):
+            engine.check_mode_code("off", "9999")
+    with pytest.raises(CodeError):
+        engine.check_mode_code("off", "9999")           # 5e essai : verrouillage
+    with pytest.raises(CodeError, match="Trop"):
+        engine.check_mode_code("off", "1234")           # même le bon code est refusé
+    assert "code_hash" in engine.config["cfg"]
+    # le panneau enregistre sa configuration sans connaître le hachage : il est conservé
+    raw = {k: v for k, v in engine.config.items()}
+    raw["cfg"] = {k: v for k, v in engine.config["cfg"].items() if k not in ("code_hash", "code_salt")}
+    engine.async_set_config(raw)
+    assert engine.code_is_set() is True
+
+
+def test_active_items_for_cards():
+    hass, engine = _build()
+    engine.async_set_mode("away")
+    hass.set("binary_sensor.fenetre", "on")             # délai d'entrée
+    hass.set("binary_sensor.fumee", "on")               # critical immédiat
+    items = {i["id"]: i for i in engine.active_items()}
+    assert items["e2"]["status"] == "triggered" and items["e2"]["level"] == "critical"
+    assert items["e1"]["status"] == "pending" and items["e1"]["until"] and items["e1"]["kind"] == "entry"
+    assert items["e1"]["zone"] == "Salon"
+    engine.async_acknowledge("e1")
+    assert {i["id"]: i for i in engine.active_items()}["e1"]["status"] == "acked"
+
+
+def test_each_mode_can_have_its_own_code():
+    import pytest
+    hass, engine = _build()
+    CodeError = sys.modules["sentinel.engine"].CodeError
+    off, away = engine.config["modes"][0], engine.config["modes"][1]
+    off["needCode"] = away["needCode"] = True
+    engine.async_set_code("1111", "off")
+    engine.async_set_code("2222", "away")
+    engine.check_mode_code("off", "1111")
+    engine.check_mode_code("away", "2222")
+    with pytest.raises(CodeError):
+        engine.check_mode_code("off", "2222")          # le code d'un autre mode ne marche pas
+    # le panneau enregistre sans les hachages : ils sont conservés
+    raw = {k: v for k, v in engine.config.items()}
+    raw["modes"] = [{k: v for k, v in m.items() if k not in ("code_hash", "code_salt")} for m in engine.config["modes"]]
+    engine.async_set_config(raw)
+    engine.check_mode_code("off", "1111")
+    assert engine.mode_needs_code(engine.config["modes"][0]) is True
+
+
+def test_mode_change_validated_on_trusted_device():
+    hass, engine = _build()
+    away = engine.config["modes"][1]
+    away["needConfirm"] = True
+    away["confirmTarget"] = "notify.mobile_app_test"
+    result = asyncio.run(engine.async_request_mode("away", None))
+    assert result == "pending"
+    assert engine.config["mode"] == "off"                       # pas encore appliqué
+    hass.run_tasks()
+    note = [c for c in hass.services.calls if c[0] == "notify"][-1][2]
+    actions = [a["action"] for a in note["data"]["actions"]]
+    assert actions[0].startswith("SENTINEL_CONFIRM_")
+    assert engine.request_info()["mode_id"] == "away"
+    # un mauvais jeton est ignoré
+    hass.bus.emit("mobile_app_notification_action", {"action": "SENTINEL_CONFIRM_zzzz"})
+    assert engine.config["mode"] == "off"
+    hass.bus.emit("mobile_app_notification_action", {"action": actions[0]})
+    assert engine.config["mode"] == "away" and engine.request_info() is None
+    # refus
+    engine.async_set_mode("off")
+    asyncio.run(engine.async_request_mode("away", None))
+    hass.run_tasks()
+    reject = [c for c in hass.services.calls if c[0] == "notify"][-1][2]["data"]["actions"][1]["action"]
+    hass.bus.emit("mobile_app_notification_action", {"action": reject})
+    assert engine.config["mode"] == "off" and engine.request_info() is None
+
+
+def test_code_and_confirmation_together():
+    import pytest
+    hass, engine = _build()
+    CodeError = sys.modules["sentinel.engine"].CodeError
+    away = engine.config["modes"][1]
+    away.update({"needCode": True, "needConfirm": True, "confirmTarget": "notify.mobile_app_test"})
+    engine.async_set_code("4321", "away")
+    with pytest.raises(CodeError):
+        asyncio.run(engine.async_request_mode("away", "0000"))   # pas de notification sans bon code
+    assert engine.request_info() is None
+    assert asyncio.run(engine.async_request_mode("away", "4321")) == "pending"
 
 
 if __name__ == "__main__":

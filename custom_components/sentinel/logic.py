@@ -20,7 +20,10 @@ Modèle de configuration (identique à celui du panneau) :
 from __future__ import annotations
 
 import copy
+import hashlib
+import hmac
 import re
+import secrets
 from typing import Any
 
 LEVELS = ("off", "info", "warning", "critical")
@@ -165,6 +168,13 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     for mode in cfg["modes"]:
         mode.setdefault("def", "off")
         mode.setdefault("ackDelay", 60)
+        mode["needCode"] = bool(mode.get("needCode"))
+        mode["needConfirm"] = bool(mode.get("needConfirm"))
+        mode["confirmTarget"] = str(mode.get("confirmTarget") or "").strip()
+        try:
+            mode["confirmTimeout"] = max(30, min(int(mode.get("confirmTimeout", 120)), 900))
+        except (TypeError, ValueError):
+            mode["confirmTimeout"] = 120
         mode.setdefault("handoffDelay", 10)
         if not isinstance(mode.get("actions"), dict):
             mode["actions"] = {}
@@ -310,6 +320,25 @@ def adjacent_room_ids(config: dict[str, Any], room_id: str) -> set[str]:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Code d'armement (stocké salé et haché, jamais en clair)
+# --------------------------------------------------------------------------- #
+def hash_code(code: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac("sha256", code.encode(), salt.encode(), 60_000).hex()
+
+
+def new_code_record(code: str) -> dict[str, str]:
+    salt = secrets.token_hex(8)
+    return {"code_salt": salt, "code_hash": hash_code(code, salt)}
+
+
+def verify_code(cfg: dict[str, Any], code: str | None) -> bool:
+    salt, digest = cfg.get("code_salt"), cfg.get("code_hash")
+    if not salt or not digest or code is None:
+        return False
+    return hmac.compare_digest(hash_code(str(code), salt), digest)
+
+
 def entity_key(ent: dict[str, Any]) -> str:
     """Identifiant d'entité nettoyé (espaces, casse) ; "" si l'entité n'est pas liée."""
     return str(ent.get("entity") or "").strip().lower()
@@ -450,6 +479,8 @@ def exposed_items(config: dict[str, Any]) -> list[dict[str, Any]]:
         ("info_count", "sensor", "info_count", "Info count", "mdi:information"),
         ("alarm", "binary_sensor", "alarm", "Alarm", "mdi:alarm-light"),
         ("last_trigger", "sensor", "last_trigger", "Last trigger", "mdi:history"),
+        ("active", "sensor", "active", "Active", "mdi:bell-ring"),
+        ("journal", "sensor", "journal", "Journal", "mdi:text-box-outline"),
     ]
     for room in config["rooms"]:
         raw.append(
@@ -484,7 +515,7 @@ def structure_signature(config: dict[str, Any]) -> str:
 
     # les options de mémorisation n'ont aucun effet sur les entités créées
     cfg = {k: v for k, v in config["cfg"].items()
-           if not k.startswith("latch_") and k != "hold_minutes"}
+           if not k.startswith("latch_") and k not in ("hold_minutes", "code_hash", "code_salt")}
     return json.dumps(
         [
             cfg,
