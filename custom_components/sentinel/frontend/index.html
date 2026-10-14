@@ -795,9 +795,11 @@ function pendingOf(e){
   var left=Math.ceil(x.pending-(Date.now()-(live._rx||Date.now()))/1000);
   return left>0?{s:left,kind:x.pending_kind}:null;
 }
+/* secondes de suspension restantes après un acquittement (0 si l’entité n’est pas acquittée) */
 function ackedOf(e){
-  if(!HA||!live||!live.ents)return false;
-  var x=live.ents[e.id];return !!(x&&x.acked);
+  if(!HA||!live||!live.ents)return 0;
+  var x=live.ents[e.id];if(!x||!x.acked)return 0;
+  return Math.max(1,Math.ceil((x.acked_left||0)-(Date.now()-(live._rx||Date.now()))/1000));
 }
 function isActive(e){return sev(e)!=='idle'||!!pendingOf(e)}
 function graceLeft(){
@@ -929,7 +931,7 @@ function entRow(e,editing){
   if(pd)cls+=' s-pending';
   if(ak)cls+=' s-acked';
   var tip=editing?'Sélectionner':(HA?(isActive(e)?'Clic : acquitter · Maj+clic : ouvrir l’entité':'Ouvrir l’entité'):'Cliquer pour simuler un changement d’état');
-  return '<button class="ent '+cls+sel+'" data-ent="'+e.id+'" title="'+tip+'"><span class="g">'+TYPES[e.type].g+'</span><span class="nm">'+esc(e.name)+'</span><span class="st">'+(editing?TYPES[e.type].label:(HA&&!e.entity?'non lié':stateText(e))+(e.on&&levelInfo(e).level==='off'?' · ignoré':'')+(pd?' · '+(pd.kind==='exit'?'délai de sortie':'délai d’entrée')+' '+pd.s+' s':'')+(ak?' · acquitté':''))+'</span></button>';
+  return '<button class="ent '+cls+sel+'" data-ent="'+e.id+'" title="'+tip+'"><span class="g">'+TYPES[e.type].g+'</span><span class="nm">'+esc(e.name)+'</span><span class="st">'+(editing?TYPES[e.type].label:(HA&&!e.entity?'non lié':stateText(e))+(e.on&&levelInfo(e).level==='off'?' · ignoré':'')+(pd?' · '+(pd.kind==='exit'?'délai de sortie':'délai d’entrée')+' '+pd.s+' s':'')+(ak?' · acquitté '+ak+' s':''))+'</span></button>';
 }
 function renderLog(){
   $('#log').innerHTML=journal.map(function(j){return '<li class="'+(j.lv?'lv-'+j.lv:'')+'"><time>'+j.t+'</time><span>'+esc(j.text)+(j.note?'<small class="note">→ '+esc(j.note.target)+' : '+esc(j.note.msg)+'</small>':'')+'</span></li>'}).join('');
@@ -2260,7 +2262,9 @@ function settingsTab(m){
     '<label>Couleur<input type="color"'+a+' data-f="color" value="'+c+'"></label>'+
     '<label class="wide">Description<input'+a+' data-f="desc" value="'+esc(m.desc||'')+'"></label>'+
     '<label>Délai d\'entrée (s)<input type="number" min="0"'+a+' data-f="entryDelay" value="'+(m.entryDelay||0)+'"></label>'+
-    '<label>Délai de sortie (s)<input type="number" min="0"'+a+' data-f="exitDelay" value="'+(m.exitDelay||0)+'"></label></div>'+
+    '<label>Délai de sortie (s)<input type="number" min="0"'+a+' data-f="exitDelay" value="'+(m.exitDelay||0)+'"></label>'+
+    '<label class="wide">Pause après acquittement d’une entité (s)<input type="number" min="0" max="3600"'+a+' data-f="ackDelay" value="'+(m.ackDelay===undefined?60:m.ackDelay)+'"></label>'+
+    '<p class="muted wide" style="margin:0">Quand tu acquittes une entité depuis le panneau, sa détection est suspendue pendant ce délai, puis elle reprend si elle est toujours active.</p></div>'+
     '<div class="actions"><button class="btn" data-cact="dup"'+a+'>Dupliquer ce mode</button>'+
     '<button class="btn dng" data-cact="del"'+a+(model.modes.length<2?' disabled':'')+'>Supprimer ce mode</button></div>';
 }
@@ -2424,7 +2428,7 @@ function cfgChange(t){
     save();refresh();return;
   }
   if(d.f&&m){
-    var num=d.f==='entryDelay'||d.f==='exitDelay';
+    var num=d.f==='entryDelay'||d.f==='exitDelay'||d.f==='ackDelay';
     m[d.f]=num?Math.max(0,parseInt(t.value,10)||0):(d.f==='color'?safeColor(t.value):t.value);
     save();refresh();return;
   }
@@ -2576,13 +2580,13 @@ if(!HA){
 }
 var pendTimer=null;
 function tickPending(){
-  var any=graceLeft()>0||(live&&live.ents&&model.ents.some(function(e){return pendingOf(e)}));
+  var any=graceLeft()>0||(live&&live.ents&&model.ents.some(function(e){return pendingOf(e)||ackedOf(e)}));
   if(any){renderHeader();renderSide()}
   else if(pendTimer){clearInterval(pendTimer);pendTimer=null;renderHeader();renderSide()}
 }
 API.onSnapshot=function(snap){
   live=snap;live._rx=Date.now();
-  if(!pendTimer&&(snap.grace||Object.keys(snap.ents||{}).some(function(k){return snap.ents[k].pending})))pendTimer=setInterval(tickPending,1000);
+  if(!pendTimer&&(snap.grace||Object.keys(snap.ents||{}).some(function(k){return snap.ents[k].pending||snap.ents[k].acked})))pendTimer=setInterval(tickPending,1000);
   if(snap.mode_id&&modeById(snap.mode_id))model.mode=snap.mode_id;
   model.ents.forEach(function(e){var x=snap.ents[e.id];e.on=!!(x&&x.on)});
   lastTrigger=snap.last_trigger||null;

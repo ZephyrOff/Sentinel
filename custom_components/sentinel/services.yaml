@@ -12,7 +12,7 @@ set_mode:
 
 acknowledge:
   name: Acquitter
-  description: Coupe les notifications répétées et efface les déclenchements mémorisés. Avec une entité, n'acquitte que celle-ci (détection en cours ou déclenchée) jusqu'à son retour à la normale.
+  description: Coupe les notifications répétées et efface les déclenchements mémorisés. Avec une entité, suspend sa détection pendant la pause réglée dans le mode (« ackDelay », 60 s par défaut), puis elle reprend.
   fields:
     entity_id:
       name: Entité

@@ -84,8 +84,10 @@ class SentinelEngine:
         # détecteurs de mouvement : une personne est considérée présente tant qu'aucun
         # mouvement n'est vu dans une pièce voisine (ou jusqu'à expiration)
         self._hold: dict[str, datetime] = {}
-        # entités acquittées individuellement : ignorées jusqu'à leur retour à la normale
-        self._silenced: set[str] = set()
+        # entités acquittées individuellement : détection suspendue jusqu'à `until`
+        # (durée réglable dans le mode : ackDelay)
+        self._silenced: dict[str, datetime] = {}
+        self._silence_timers: dict[str, CALLBACK_TYPE] = {}
         self._hold_timers: dict[str, CALLBACK_TYPE] = {}
         self._signature = ""
 
@@ -119,7 +121,8 @@ class SentinelEngine:
         if self._unsub_states:
             self._unsub_states()
             self._unsub_states = None
-        for timers in (self._delay_timers, self._repeat_timers, self._hold_timers):
+        for timers in (self._delay_timers, self._repeat_timers, self._hold_timers,
+                       self._silence_timers):
             for cancel in timers.values():
                 cancel()
             timers.clear()
@@ -251,7 +254,8 @@ class SentinelEngine:
             del self._latched[ent_id]
         for ent_id in [i for i in self._hold if i not in known]:
             self._release_hold(ent_id)
-        self._silenced &= known
+        for ent_id in [i for i in self._silenced if i not in known]:
+            self._end_silence(ent_id, evaluate=False)
         for ent_id in [i for i in self._triggered if i not in known]:
             self._triggered.pop(ent_id, None)
             self._cancel_timers(ent_id)
@@ -273,10 +277,8 @@ class SentinelEngine:
         level = resolve_level(mode, ent, room) if on else "off"
         previous = self._triggered.get(ent_id)
 
-        if ent_id in self._silenced:
-            if on:
-                return
-            self._silenced.discard(ent_id)
+        if ent_id in self._silenced and on:
+            return      # détection suspendue après acquittement
 
         if not on or level == "off":
             if not on:
@@ -475,7 +477,7 @@ class SentinelEngine:
             self._cancel_timers(ent_id)
         self._triggered.clear()
         self._acked.clear()
-        self._silenced.clear()
+        self._clear_silences()
         self._clear_holds()
         self._log(f"Mode « {mode.get('name', '')} » activé")
         note, _cfg = self._react("enter", None, None, mode, "")
@@ -513,6 +515,46 @@ class SentinelEngine:
         self._notify()
         return True
 
+    def _ack_delay(self) -> int:
+        try:
+            value = int(current_mode(self.config).get("ackDelay", 60))
+        except (TypeError, ValueError):
+            value = 60
+        return max(0, min(value, 3600))
+
+    def _start_silence(self, ent_id: str, seconds: int) -> None:
+        old = self._silence_timers.pop(ent_id, None)
+        if old:
+            old()
+        if seconds <= 0:
+            self._silenced.pop(ent_id, None)
+            return
+        self._silenced[ent_id] = dt_util.utcnow() + timedelta(seconds=seconds)
+
+        @callback
+        def _done(_now: datetime) -> None:
+            self._silence_timers.pop(ent_id, None)
+            self._end_silence(ent_id, evaluate=True)
+            self._notify()
+
+        self._silence_timers[ent_id] = async_call_later(self.hass, seconds, _done)
+
+    def _end_silence(self, ent_id: str, evaluate: bool) -> None:
+        self._silenced.pop(ent_id, None)
+        cancel = self._silence_timers.pop(ent_id, None)
+        if cancel:
+            cancel()
+        if evaluate:
+            ent = next((e for e in self.config["ents"] if e["id"] == ent_id), None)
+            if ent is not None:
+                self._evaluate(ent, silent=False)   # toujours actif : le délai repart
+
+    def _clear_silences(self) -> None:
+        for cancel in self._silence_timers.values():
+            cancel()
+        self._silence_timers.clear()
+        self._silenced.clear()
+
     def _acknowledge_entity(self, ref: str) -> bool:
         """Acquitte une entité en cours de détection (délai) ou déclenchée."""
         key = ref.lower()
@@ -528,11 +570,15 @@ class SentinelEngine:
         self._latched.pop(ent_id, None)
         self._acked.discard(ent_id)
         self._on_since.pop(ent_id, None)
-        self._silenced.add(ent_id)
         if ent_id in self._hold and not self._raw_on(ent):
             self._release_hold(ent_id)     # présence maintenue : la personne est partie
+        seconds = self._ack_delay()
+        self._start_silence(ent_id, seconds)
         zone = (room_of(self.config, ent) or {}).get("name", "")
-        self._log(f"Acquitté : {ent.get('name', '')}" + (f" ({zone})" if zone else ""))
+        self._log(
+            f"Acquitté : {ent.get('name', '')}" + (f" ({zone})" if zone else "")
+            + (f" · détection suspendue {seconds} s" if seconds else "")
+        )
         self._save_soon()
         self._notify()
         return True
@@ -612,6 +658,10 @@ class SentinelEngine:
                 "latched": self._latched.get(ent["id"], ""),
                 "held": ent["id"] in self._hold and not self._raw_on(ent),
                 "acked": ent["id"] in self._silenced,
+                **(
+                    {"acked_left": int((self._silenced[ent["id"]] - now).total_seconds()) + 1}
+                    if ent["id"] in self._silenced else {}
+                ),
                 # déclenchement différé par un délai de sortie ou d'entrée
                 **self._pending_info(ent["id"], now),
             }

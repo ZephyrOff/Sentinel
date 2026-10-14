@@ -400,20 +400,23 @@ def test_adjacent_rooms_for_polygons():
 
 def test_acknowledge_single_entity_pending_and_triggered():
     hass, engine = _build()
+    engine.config["modes"][1]["ackDelay"] = 45
     engine.async_set_mode("away")                      # entryDelay 30 s sur critical
     hass.set("binary_sensor.fenetre", "on")
     assert engine.snapshot()["ents"]["e1"]["pending_kind"] == "entry"
     assert engine.async_acknowledge("binary_sensor.fenetre") is True
     snap = engine.snapshot()["ents"]["e1"]
     assert snap["acked"] is True and "pending" not in snap and snap["level"] == ""
-    # ne déclenchera pas tant que la fenêtre reste ouverte
-    engine._evaluate(engine.config["ents"][0], silent=False)
-    assert engine.counts()["critical"] == 0
-    # retour à la normale : l'acquittement tombe, un nouveau déclenchement redémarre le délai
+    assert 40 <= snap["acked_left"] <= 46
+    # pendant la suspension : un nouveau changement d'état ne déclenche rien
     hass.set("binary_sensor.fenetre", "off")
-    assert engine.snapshot()["ents"]["e1"]["acked"] is False
     hass.set("binary_sensor.fenetre", "on")
-    assert engine.snapshot()["ents"]["e1"]["pending_kind"] == "entry"
+    assert "pending" not in engine.snapshot()["ents"]["e1"]
+    # fin de la suspension (minuterie à 45 s) : toujours ouverte, la détection repart
+    timer = [t for t in _Timers.calls if not t["cancelled"] and abs(t["delay"] - 45) < 1][-1]
+    timer["action"](None)
+    snap = engine.snapshot()["ents"]["e1"]
+    assert snap["acked"] is False and snap["pending_kind"] == "entry"
 
 
 def test_acknowledge_triggered_entity_clears_status_only_for_it():

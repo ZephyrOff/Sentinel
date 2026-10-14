@@ -164,6 +164,7 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     cfg["cfg"]["hold_minutes"] = max(1, min(hold, 720))
     for mode in cfg["modes"]:
         mode.setdefault("def", "off")
+        mode.setdefault("ackDelay", 60)
         if not isinstance(mode.get("actions"), dict):
             mode["actions"] = {}
         if not isinstance(mode.get("zones"), dict):
