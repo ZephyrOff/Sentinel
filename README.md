@@ -15,6 +15,7 @@ qu'elle prend quand elle se déclenche : `off`, `info`, `warning` ou `critical`.
 - **Modes libres** : crée, renomme, duplique tes modes (Désarmé, Présence, Absence, Nuit, Vacances...).
 - **Niveau par entité, zone ou type** : priorité entité > zone > type > défaut.
 - **Notifications par niveau et par mode**, ou propres à une zone : service `notify.*`, message avec variables, rappel périodique, notification à l'activation du mode et au retour à la normale.
+- **Focus** (onglet Surveillance) : met en avant ce qui est surveillé dans le mode actif (teinte légère), le reste passe en fil de fer ; filtres par niveau et par type d'entité.
 - **Actions** : à chaque évènement d'un mode (mode activé, info, warning, critical, retour à la normale), appelle des services Home Assistant (lancer un script, allumer ou éteindre une entité…), au niveau du mode ou propres à une zone.
 - **Délais** : temporisation par entité, délai d'entrée et de sortie par mode.
 - **Entités Home Assistant** pour tes automatisations (statut, compteurs, mode, alarme, zones).

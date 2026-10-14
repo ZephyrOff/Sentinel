@@ -90,6 +90,20 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px
 .chip{border:1px solid var(--line);background:var(--surface);padding:6px 11px;border-radius:999px;font-weight:500}
 .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .chip.ghost{color:var(--muted)}
+.chip.ghost[aria-pressed="true"]{color:var(--accent-fg)}
+.lvchip{display:inline-flex;align-items:center;gap:6px}
+.lvchip .dot{margin:0}
+.lvchip[aria-pressed="true"]{background:var(--surface);color:var(--fg);border-color:var(--fg)}
+.lvchip[aria-pressed="false"]{opacity:.55}
+.ovtypes{position:relative}
+.ovtypes summary{list-style:none;cursor:pointer}
+.ovtypes summary::-webkit-details-marker{display:none}
+.ovpanel{position:absolute;top:calc(100% + 6px);left:0;z-index:6;min-width:240px;max-width:calc(100vw - 40px);max-height:56vh;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.ovpanel .chk{display:grid;grid-template-columns:auto 26px minmax(0,1fr) auto;align-items:center;gap:8px;font-size:13.5px}
+.ovpanel .chk:last-child{grid-template-columns:auto minmax(0,1fr)}
+.ovpanel .g{width:26px;height:22px;border-radius:6px;border:1px solid var(--line);display:grid;place-items:center;font:500 10.5px var(--font-mono)}
+.ovpanel small{color:var(--muted);font-size:11.5px}
+.ovrow{display:flex;gap:6px}
 .panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px}
 .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
@@ -426,6 +440,7 @@ details.help p{margin:8px 0;color:var(--muted);font-size:13px;max-width:75ch}
           <span><i class="dot sense"></i>Info</span>
           <span><i class="dot active"></i>Warning</span>
           <span><i class="dot alarm"></i>Critical</span>
+          <span id="lgFocus" hidden>· Fil de fer : ignoré</span>
         </div>
         <div class="ov br panel range">
           <label for="explode">Écarter les étages</label>
@@ -736,7 +751,7 @@ function syncOpenings(){
 }
 if(!model.modes||!model.cfg){var _s=sample();model.modes=_s.modes;model.cfg=_s.cfg;model.mode=_s.mode}
 syncOpenings();
-var ui={view:'watch',floor:'all',editFloor:model.floors[0].id,sel:null,armed:'away',cfgCol:{},explode:1.6,hover:null};
+var ui={focus:false,lvSel:{},typeSel:{},focusHide:false,typesOpen:false,view:'watch',floor:'all',editFloor:model.floors[0].id,sel:null,armed:'away',cfgCol:{},explode:1.6,hover:null};
 var journal=[],lastTrigger=null;
 
 /* ---------- logique d'état ---------- */
@@ -893,6 +908,26 @@ function renderOverlays(){
     h+='<button class="chip" data-floor="'+f.id+'" aria-pressed="'+(ui.floor===f.id)+'">'+esc(f.name)+'</button>';
   });
   h+='<button class="chip ghost" data-walls="1" aria-pressed="'+!!ui.solidWalls+'">Murs pleins</button>';
+  h+='<button class="chip ghost" data-focus="1" aria-pressed="'+!!ui.focus+'" title="Met en avant ce qui est surveillé dans le mode actif ; le reste passe en fil de fer">Focus</button>';
+  if(ui.focus){
+    var lc={critical:0,warning:0,info:0},tc={};
+    model.ents.forEach(function(e){
+      var l=levelInfo(e).level;if(lc[l]!==undefined)lc[l]++;
+      tc[e.type]=tc[e.type]||{n:0,m:0};tc[e.type].n++;if(l!=='off')tc[e.type].m++;
+    });
+    FOCUS_LEVELS.forEach(function(l){
+      h+='<button class="chip lvchip" data-lvsel="'+l+'" aria-pressed="'+(ui.lvSel[l]!==false)+'"><i class="dot '+(LV2SEV[l]==='sense'?'sense':LV2SEV[l])+'"></i>'+LV_LABEL[l]+' · '+lc[l]+'</button>';
+    });
+    var keys=Object.keys(TYPES).filter(function(k){return tc[k]}),shown=keys.filter(function(k){return ui.typeSel[k]!==false}).length;
+    h+='<details class="ovtypes"'+(ui.typesOpen?' open':'')+'><summary class="chip ghost">Types · '+shown+'/'+keys.length+'</summary><div class="ovpanel">'+
+      '<div class="ovrow"><button class="btn" data-tall="1">Tous</button><button class="btn" data-tnone="1">Aucun</button></div>'+
+      keys.map(function(k){
+        return '<label class="chk"><input type="checkbox" data-tsel="'+k+'"'+(ui.typeSel[k]!==false?' checked':'')+'><span class="g">'+TYPES[k].g+'</span>'+esc(TYPES[k].label)+
+          '<small>'+tc[k].m+'/'+tc[k].n+' surveillé'+(tc[k].m>1?'s':'')+'</small></label>';
+      }).join('')+
+      '<label class="chk"><input type="checkbox" data-fhide="1"'+(ui.focusHide?' checked':'')+'> Masquer le reste au lieu de le griser</label></div></details>';
+  }
+  var lg=$('#lgFocus');if(lg)lg.hidden=!ui.focus;
   $('#ovFloors').innerHTML=h;
 }
 
@@ -1010,6 +1045,38 @@ function buildWalls(g,r,f,mat,dim){
     wallBox(g,mat,w,cur,w.len,0,H);
   });
 }
+/* ---------- focus : met en avant ce qui est surveillé dans le mode actif ---------- */
+var FOCUS_LEVELS=['critical','warning','info'];
+function focusState(e){
+  if(!ui.focus)return null;
+  var l=levelInfo(e).level;
+  return {level:l,ok:l!=='off'&&ui.lvSel[l]!==false&&ui.typeSel[e.type]!==false};
+}
+var ghostMat=null;
+/* obj : sous-arbre de l'entité. Ignoré ou filtré : fil de fer gris. Surveillé : teinte légère du niveau et arêtes fines.
+   Un capteur déclenché garde ses couleurs fortes. */
+function styleFocus(obj,e,isStem){
+  var st=focusState(e);if(!st)return;
+  if(!st.ok){
+    if(ui.focusHide||isStem){obj.visible=false;return}
+    if(!ghostMat)ghostMat=new THREE.MeshBasicMaterial({color:new THREE.Color(css('--idle')),wireframe:true,transparent:true,opacity:0.5,depthWrite:false});
+    obj.traverse(function(o){if(o.isMesh&&!o.userData.ent)o.material=ghostMat});
+    return;
+  }
+  if(sev(e)!=='idle')return;
+  // teinte adoucie : le niveau est suggéré, il ne crie pas
+  var c=new THREE.Color(css(sevVar(LV2SEV[st.level]||'idle'))).lerp(new THREE.Color(css('--idle')),0.4);
+  var edges=[];
+  obj.traverse(function(o){
+    if(!o.isMesh||o.userData.ent||!o.material)return;
+    if(o.material.color)o.material.color.lerp(c,0.2);
+    if(!o.material.transparent||o.material.opacity>0.6)edges.push(o);
+  });
+  edges.forEach(function(o){
+    var ln=new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry),new THREE.LineBasicMaterial({color:c,transparent:true,opacity:0.5}));
+    o.add(ln);
+  });
+}
 function buildOpening(g,o,w,ow,H){
   var T=TYPES[o.type],s=sev(o);
   var col=new THREE.Color(css(s==='idle'?'--scene-frame':sevVar(s)));
@@ -1053,6 +1120,7 @@ function buildOpening(g,o,w,ow,H){
     var hd=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.05,0.09),frameMat);
     hd.position.set(leafW-0.12,leafH*0.48,0);pivot.add(hd);
   }
+  styleFocus(grp,o);
 }
 
 /* Meuble : caisson + portes battantes (1 ou 2) qui s'ouvrent vers l'avant quand le capteur est actif */
@@ -1087,11 +1155,12 @@ function buildFurniture(g,e){
     var rg=new THREE.Mesh(new THREE.RingGeometry(0.25,0.32,32),new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.7,side:THREE.DoubleSide,depthWrite:false}));
     rg.rotation.x=-Math.PI/2;rg.position.set(e.x,0.1,e.z);g.add(rg);pulsers.push({m:null,ring:rg});
   }
+  styleFocus(grp,e);
 }
 
 function build(){
   if(!renderer)return;
-  disposeGroup(root);pickables=[];pulsers=[];
+  disposeGroup(root);pickables=[];pulsers=[];ghostMat=null;
   renderer.setClearColor(css('--scene-bg'));
   var cSlab=new THREE.Color(css('--scene-slab')),cWall=css('--scene-wall'),cFg=css('--fg'),cAcc=css('--accent');
   var maxX=0,maxZ=0,minX=0,minZ=0,maxLvl=0;
@@ -1114,7 +1183,7 @@ function build(){
       slab.rotation.x=Math.PI/2;slab.position.y=rh/2;slab.userData={room:r.id};g.add(slab);
       if(!dim)pickables.push(slab);
       var selRoom=ui.sel&&ui.sel.kind==='room'&&ui.sel.id===r.id;
-      var wallMat=new THREE.MeshLambertMaterial({color:selRoom?cAcc:cWall,transparent:true,opacity:dim?0.05:(ui.solidWalls?0.92:0.34),depthWrite:ui.solidWalls&&!dim});
+      var wallMat=new THREE.MeshLambertMaterial({color:selRoom?cAcc:cWall,transparent:true,opacity:dim?0.05:(ui.solidWalls?0.92:(ui.focus?0.2:0.34)),depthWrite:ui.solidWalls&&!dim});
       buildWalls(g,r,f,wallMat,dim);
       var lb=labelSprite(r.name,cFg,dim?0.15:0.9);
       lb.position.set(lp.x,0.35,lp.z);g.add(lb);
@@ -1140,6 +1209,7 @@ function build(){
       m.position.set(e.x,T.y,e.z);g.add(m);
       var stem=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,T.y,6),new THREE.MeshBasicMaterial({color:c,transparent:true,opacity:0.5}));
       stem.position.set(e.x,T.y/2,e.z);g.add(stem);
+      styleFocus(m,e);styleFocus(stem,e,true);
       var hit=new THREE.Mesh(new THREE.SphereGeometry(0.55,8,6),new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
       hit.position.copy(m.position);hit.userData={ent:e.id};g.add(hit);pickables.push(hit);
       if(s==='alarm'){
@@ -2328,6 +2398,12 @@ document.addEventListener('click',function(ev){
   var t=ev.target.closest('button');if(!t)return;
   if(t.dataset.view){setView(t.dataset.view);return}
   if(t.dataset.walls){ui.solidWalls=!ui.solidWalls;renderOverlays();build();return}
+  if(t.dataset.focus){ui.focus=!ui.focus;renderOverlays();build();return}
+  if(t.dataset.lvsel){ui.lvSel[t.dataset.lvsel]=ui.lvSel[t.dataset.lvsel]===false;renderOverlays();build();return}
+  if(t.dataset.tall||t.dataset.tnone){
+    Object.keys(TYPES).forEach(function(k){ui.typeSel[k]=!!t.dataset.tall});
+    ui.typesOpen=true;renderOverlays();build();return;
+  }
   if(t.dataset.sec){ui.cfgCol[t.dataset.sec]=!ui.cfgCol[t.dataset.sec];renderConfig();return}
   if(t.dataset.msel){ui.modeSel=t.dataset.msel;renderConfig();return}
   if(t.dataset.mtab){ui.modeTab=t.dataset.mtab;renderConfig();return}
@@ -2382,6 +2458,14 @@ document.addEventListener('click',function(ev){
     else{var e=model.ents.find(function(x){return x.id===t.dataset.ent});ui.multi=[];ui.sel={kind:'ent',id:e.id};ui.editFloor=e.floor;renderEditor();renderSide()}
   }
 });
+$('#ovFloors').addEventListener('change',function(ev){
+  var t=ev.target;
+  if(t.dataset.tsel){ui.typeSel[t.dataset.tsel]=t.checked}
+  else if(t.dataset.fhide){ui.focusHide=t.checked}
+  else return;
+  ui.typesOpen=true;renderOverlays();build();
+});
+$('#ovFloors').addEventListener('toggle',function(ev){if(ev.target.classList&&ev.target.classList.contains('ovtypes'))ui.typesOpen=ev.target.open},true);
 $('#config').addEventListener('change',function(ev){cfgChange(ev.target)});
 $('#config').addEventListener('focusin',function(ev){
   var t=ev.target;
