@@ -69,7 +69,7 @@ Le préfixe (`sentinel` par défaut) et chaque identifiant se règlent dans l'on
 | Service | Rôle |
 |---|---|
 | `sentinel.set_mode` | `mode`: nom ou identifiant du mode |
-| `sentinel.acknowledge` | Coupe les rappels en cours |
+| `sentinel.acknowledge` | Coupe les rappels et efface les déclenchements mémorisés. Avec `entity_id`, n'acquitte que cette entité (détection en cours ou déclenchée) jusqu'à son retour à la normale |
 | `sentinel.reset_counters` | Remet à zéro le cumul et le dernier déclenchement |
 
 Événements : `sentinel_triggered` (`entity_id`, `sentinel_id`, `name`, `level`, `zone`, `mode`) et `sentinel_cleared`.

@@ -12,7 +12,15 @@ set_mode:
 
 acknowledge:
   name: Acquitter
-  description: Coupe les notifications répétées en cours et efface les déclenchements mémorisés (statut, alarme, zones) si la mémorisation est activée.
+  description: Coupe les notifications répétées et efface les déclenchements mémorisés. Avec une entité, n'acquitte que celle-ci (détection en cours ou déclenchée) jusqu'à son retour à la normale.
+  fields:
+    entity_id:
+      name: Entité
+      description: Entité Home Assistant surveillée par Sentinel (ou identifiant Sentinel). Vide pour tout acquitter.
+      example: binary_sensor.fenetre_salon
+      required: false
+      selector:
+        text:
 
 reset_counters:
   name: Réinitialiser les compteurs

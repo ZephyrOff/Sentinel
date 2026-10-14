@@ -91,6 +91,7 @@ header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:10px
 .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
 .chip.ghost{color:var(--muted)}
 .chip.ghost[aria-pressed="true"]{color:var(--accent-fg)}
+.ent.s-acked{opacity:.6}
 .ent.s-pending .g{border-style:dashed;border-color:var(--warn);color:var(--warn)}
 .ent.s-pending .st{color:var(--warn)}
 .lvchip{display:inline-flex;align-items:center;gap:6px}
@@ -482,6 +483,7 @@ var API=(function(){
   };
   a.save=function(model){a.pending=model;clearTimeout(a.timer);a.timer=setTimeout(a._send,500)};
   a.ack=function(){return a._send().then(function(){return a.hass.callService('sentinel','acknowledge',{})})};
+  a.ackEntity=function(ref){return a._send().then(function(){return a.hass.callService('sentinel','acknowledge',{entity_id:ref})})};
   a.setMode=function(id){return a._send().then(function(){return a.hass.callService('sentinel','set_mode',{mode:id})})};
   a.subscribe=function(cb){return a.hass.connection.subscribeMessage(cb,{type:'sentinel/subscribe'})};
   a.moreInfo=function(entityId){
@@ -793,6 +795,11 @@ function pendingOf(e){
   var left=Math.ceil(x.pending-(Date.now()-(live._rx||Date.now()))/1000);
   return left>0?{s:left,kind:x.pending_kind}:null;
 }
+function ackedOf(e){
+  if(!HA||!live||!live.ents)return false;
+  var x=live.ents[e.id];return !!(x&&x.acked);
+}
+function isActive(e){return sev(e)!=='idle'||!!pendingOf(e)}
 function graceLeft(){
   if(!HA||!live||!live.grace)return 0;
   return Math.max(0,Math.ceil(live.grace-(Date.now()-(live._rx||Date.now()))/1000));
@@ -841,9 +848,15 @@ function triggerNote(e){
   return {lv:lv,note:on.length?{target:on.map(function(n){return n.target||'notify.notify'}).join(', '),msg:fillTpl(on[0].msg,e,m,lv)}:null};
 }
 function describe(e){var r=roomOf(e);return e.name+(r?' ('+r.name+')':'')}
-function toggle(id){
+function toggle(id,ev){
   var e=model.ents.find(function(x){return x.id===id});if(!e)return;
-  if(HA){if(e.entity)API.moreInfo(e.entity);return}
+  if(HA){
+    // clic : acquitte une entité en cours de détection ou déclenchée ; Maj+clic ou entité calme : ouvre l’entité
+    var open=ev&&(ev.shiftKey||ev.ctrlKey||ev.metaKey);
+    if(e.entity&&isActive(e)&&!open)API.ackEntity(e.entity);
+    else if(e.entity)API.moreInfo(e.entity);
+    return;
+  }
   e.on=!e.on;
   var t=triggerNote(e);
   logEvent(describe(e)+' : '+stateText(e),t.lv,t.note);
@@ -912,9 +925,11 @@ function renderSide(){
 function entRow(e,editing){
   var s=sev(e),cls=s==='alarm'?'s-alarm':s==='active'?'s-active':s==='sense'?'s-sense':'';
   var sel=ui.sel&&ui.sel.kind==='ent'&&ui.sel.id===e.id?' sel':'';
-  var pd=editing?null:pendingOf(e);
+  var pd=editing?null:pendingOf(e),ak=!editing&&ackedOf(e);
   if(pd)cls+=' s-pending';
-  return '<button class="ent '+cls+sel+'" data-ent="'+e.id+'" title="'+(editing?'Sélectionner':(HA?'Ouvrir l\'entité':'Cliquer pour simuler un changement d\'état'))+'"><span class="g">'+TYPES[e.type].g+'</span><span class="nm">'+esc(e.name)+'</span><span class="st">'+(editing?TYPES[e.type].label:(HA&&!e.entity?'non lié':stateText(e))+(e.on&&levelInfo(e).level==='off'?' · ignoré':'')+(pd?' · '+(pd.kind==='exit'?'délai de sortie':'délai d\'entrée')+' '+pd.s+' s':''))+'</span></button>';
+  if(ak)cls+=' s-acked';
+  var tip=editing?'Sélectionner':(HA?(isActive(e)?'Clic : acquitter · Maj+clic : ouvrir l’entité':'Ouvrir l’entité'):'Cliquer pour simuler un changement d’état');
+  return '<button class="ent '+cls+sel+'" data-ent="'+e.id+'" title="'+tip+'"><span class="g">'+TYPES[e.type].g+'</span><span class="nm">'+esc(e.name)+'</span><span class="st">'+(editing?TYPES[e.type].label:(HA&&!e.entity?'non lié':stateText(e))+(e.on&&levelInfo(e).level==='off'?' · ignoré':'')+(pd?' · '+(pd.kind==='exit'?'délai de sortie':'délai d’entrée')+' '+pd.s+' s':'')+(ak?' · acquitté':''))+'</span></button>';
 }
 function renderLog(){
   $('#log').innerHTML=journal.map(function(j){return '<li class="'+(j.lv?'lv-'+j.lv:'')+'"><time>'+j.t+'</time><span>'+esc(j.text)+(j.note?'<small class="note">→ '+esc(j.note.target)+' : '+esc(j.note.msg)+'</small>':'')+'</span></li>'}).join('');
@@ -1330,7 +1345,7 @@ function pickAt(ev){
 function pick(ev){
   var p=pickAt(ev);
   if(!p){ui.sel=null;ui.multi=[];renderSide();build();return}
-  if(p.kind==='ent'){toggle(p.id);return}
+  if(p.kind==='ent'){toggle(p.id,ev);return}
   ui.sel=p;renderSide();build();
   var el=$('.room.sel');if(el&&el.scrollIntoView)el.scrollIntoView({block:'nearest'});
 }
@@ -2514,7 +2529,7 @@ document.addEventListener('click',function(ev){
   if(t.dataset.room){ui.multi=[];ui.sel={kind:'room',id:t.dataset.room};renderSide();if(ui.view==='watch')build();else{
     var r=model.rooms.find(function(x){return x.id===t.dataset.room});if(r)ui.editFloor=r.floor;renderEditor()}return}
   if(t.dataset.ent){
-    if(ui.view==='watch')toggle(t.dataset.ent);
+    if(ui.view==='watch')toggle(t.dataset.ent,ev);
     else{var e=model.ents.find(function(x){return x.id===t.dataset.ent});ui.multi=[];ui.sel={kind:'ent',id:e.id};ui.editFloor=e.floor;renderEditor();renderSide()}
   }
 });

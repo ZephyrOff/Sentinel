@@ -245,7 +245,7 @@ def test_snapshot_shape():
     hass.set("binary_sensor.fumee", "on")
     snap = engine.snapshot()
     assert snap["mode_id"] == "off" and snap["counts"]["critical"] == 1
-    assert snap["ents"]["e2"] == {"state": "on", "on": True, "level": "critical", "latched": "critical", "held": False}
+    assert snap["ents"]["e2"] == {"state": "on", "on": True, "level": "critical", "latched": "critical", "held": False, "acked": False}
     assert engine.zone_status("r1") == ("ok", 0) or engine.zone_status("r1")[0] in ("ok", "critical")
 
 
@@ -396,6 +396,33 @@ def test_adjacent_rooms_for_polygons():
         {"id": "d", "floor": "f1", "pts": [[0, 0], [4, 0], [4, 4], [0, 4]]},   # autre étage
     ]}
     assert lg.adjacent_room_ids(cfg, "a") == {"b"}
+
+
+def test_acknowledge_single_entity_pending_and_triggered():
+    hass, engine = _build()
+    engine.async_set_mode("away")                      # entryDelay 30 s sur critical
+    hass.set("binary_sensor.fenetre", "on")
+    assert engine.snapshot()["ents"]["e1"]["pending_kind"] == "entry"
+    assert engine.async_acknowledge("binary_sensor.fenetre") is True
+    snap = engine.snapshot()["ents"]["e1"]
+    assert snap["acked"] is True and "pending" not in snap and snap["level"] == ""
+    # ne déclenchera pas tant que la fenêtre reste ouverte
+    engine._evaluate(engine.config["ents"][0], silent=False)
+    assert engine.counts()["critical"] == 0
+    # retour à la normale : l'acquittement tombe, un nouveau déclenchement redémarre le délai
+    hass.set("binary_sensor.fenetre", "off")
+    assert engine.snapshot()["ents"]["e1"]["acked"] is False
+    hass.set("binary_sensor.fenetre", "on")
+    assert engine.snapshot()["ents"]["e1"]["pending_kind"] == "entry"
+
+
+def test_acknowledge_triggered_entity_clears_status_only_for_it():
+    hass, engine = _build()
+    hass.set("binary_sensor.fumee", "on")             # critical immédiat (mode Désarmé)
+    assert engine.counts()["critical"] == 1
+    assert engine.async_acknowledge("e2") is True     # par identifiant Sentinel
+    assert engine.counts()["critical"] == 0
+    assert engine.async_acknowledge("inconnu") is False
 
 
 if __name__ == "__main__":

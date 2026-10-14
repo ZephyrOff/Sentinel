@@ -84,6 +84,8 @@ class SentinelEngine:
         # détecteurs de mouvement : une personne est considérée présente tant qu'aucun
         # mouvement n'est vu dans une pièce voisine (ou jusqu'à expiration)
         self._hold: dict[str, datetime] = {}
+        # entités acquittées individuellement : ignorées jusqu'à leur retour à la normale
+        self._silenced: set[str] = set()
         self._hold_timers: dict[str, CALLBACK_TYPE] = {}
         self._signature = ""
 
@@ -249,6 +251,7 @@ class SentinelEngine:
             del self._latched[ent_id]
         for ent_id in [i for i in self._hold if i not in known]:
             self._release_hold(ent_id)
+        self._silenced &= known
         for ent_id in [i for i in self._triggered if i not in known]:
             self._triggered.pop(ent_id, None)
             self._cancel_timers(ent_id)
@@ -269,6 +272,11 @@ class SentinelEngine:
         on = self._is_on(ent)
         level = resolve_level(mode, ent, room) if on else "off"
         previous = self._triggered.get(ent_id)
+
+        if ent_id in self._silenced:
+            if on:
+                return
+            self._silenced.discard(ent_id)
 
         if not on or level == "off":
             if not on:
@@ -467,6 +475,7 @@ class SentinelEngine:
             self._cancel_timers(ent_id)
         self._triggered.clear()
         self._acked.clear()
+        self._silenced.clear()
         self._clear_holds()
         self._log(f"Mode « {mode.get('name', '')} » activé")
         note, _cfg = self._react("enter", None, None, mode, "")
@@ -487,8 +496,10 @@ class SentinelEngine:
         self._notify()
 
     @callback
-    def async_acknowledge(self) -> None:
-        """Coupe les rappels en cours jusqu'au prochain déclenchement."""
+    def async_acknowledge(self, ref: str | None = None) -> bool:
+        """Acquitte tout, ou une seule entité (identifiant Sentinel ou entité Home Assistant)."""
+        if ref:
+            return self._acknowledge_entity(str(ref).strip())
         self._acked.update(self._triggered)
         for cancel in self._repeat_timers.values():
             cancel()
@@ -500,6 +511,31 @@ class SentinelEngine:
         self._save_soon()
         self._log("Alertes acquittées")
         self._notify()
+        return True
+
+    def _acknowledge_entity(self, ref: str) -> bool:
+        """Acquitte une entité en cours de détection (délai) ou déclenchée."""
+        key = ref.lower()
+        ent = next(
+            (e for e in self.config["ents"] if e.get("id") == ref or entity_key(e) == key),
+            None,
+        )
+        if ent is None:
+            return False
+        ent_id = ent["id"]
+        self._cancel_timers(ent_id)        # délai en cours et rappels
+        self._triggered.pop(ent_id, None)
+        self._latched.pop(ent_id, None)
+        self._acked.discard(ent_id)
+        self._on_since.pop(ent_id, None)
+        self._silenced.add(ent_id)
+        if ent_id in self._hold and not self._raw_on(ent):
+            self._release_hold(ent_id)     # présence maintenue : la personne est partie
+        zone = (room_of(self.config, ent) or {}).get("name", "")
+        self._log(f"Acquitté : {ent.get('name', '')}" + (f" ({zone})" if zone else ""))
+        self._save_soon()
+        self._notify()
+        return True
 
     @callback
     def async_reset_counters(self) -> None:
@@ -575,6 +611,7 @@ class SentinelEngine:
                 "level": self._triggered.get(ent["id"], ""),
                 "latched": self._latched.get(ent["id"], ""),
                 "held": ent["id"] in self._hold and not self._raw_on(ent),
+                "acked": ent["id"] in self._silenced,
                 # déclenchement différé par un délai de sortie ou d'entrée
                 **self._pending_info(ent["id"], now),
             }

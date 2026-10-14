@@ -72,8 +72,12 @@ def _register_services(hass: HomeAssistant) -> None:
                 _LOGGER.warning("Mode inconnu : %s", call.data["mode"])
 
     async def _acknowledge(call: ServiceCall) -> None:
+        ref = call.data.get("entity_id")
+        found = False
         for engine in _engines():
-            engine.async_acknowledge()
+            found = bool(engine.async_acknowledge(ref)) or found
+        if ref and not found:
+            _LOGGER.warning("Acquittement : entité inconnue %s", ref)
 
     async def _reset(call: ServiceCall) -> None:
         for engine in _engines():
@@ -83,7 +87,10 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_SET_MODE, _set_mode,
         schema=vol.Schema({vol.Required("mode"): str}),
     )
-    hass.services.async_register(DOMAIN, SERVICE_ACKNOWLEDGE, _acknowledge)
+    hass.services.async_register(
+        DOMAIN, SERVICE_ACKNOWLEDGE, _acknowledge,
+        schema=vol.Schema({vol.Optional("entity_id"): str}),
+    )
     hass.services.async_register(DOMAIN, SERVICE_RESET_COUNTERS, _reset)
 
 
