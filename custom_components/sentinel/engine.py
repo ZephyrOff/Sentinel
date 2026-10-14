@@ -88,6 +88,9 @@ class SentinelEngine:
         # (durée réglable dans le mode : ackDelay)
         self._silenced: dict[str, datetime] = {}
         self._silence_timers: dict[str, CALLBACK_TYPE] = {}
+        # détecteurs de mouvement acquittés : on attend une nouvelle détection (retour
+        # à « off » puis « on ») avant de les réarmer, au lieu de reprendre la même
+        self._rearm: set[str] = set()
         self._hold_timers: dict[str, CALLBACK_TYPE] = {}
         self._signature = ""
 
@@ -203,7 +206,14 @@ class SentinelEngine:
 
     def _track_motion(self, ent: dict[str, Any]) -> None:
         """Un mouvement détecté maintient la présence ; il libère les pièces voisines."""
-        if ent.get("type") != "motion" or not self._raw_on(ent):
+        if ent.get("type") != "motion":
+            return
+        raw = self._raw_on(ent)
+        if ent["id"] in self._rearm:
+            if not raw:
+                self._rearm.discard(ent["id"])   # le capteur est retombé : prêt pour la suite
+            return                               # même détection : on n'y revient pas
+        if not raw:
             return
         ent_id = ent["id"]
         self._hold[ent_id] = dt_util.utcnow()
@@ -274,6 +284,8 @@ class SentinelEngine:
         mode = current_mode(self.config)
         room = room_of(self.config, ent)
         on = self._is_on(ent)
+        if ent_id in self._rearm and self._raw_on(ent):
+            on = False
         level = resolve_level(mode, ent, room) if on else "off"
         previous = self._triggered.get(ent_id)
 
@@ -478,6 +490,7 @@ class SentinelEngine:
         self._triggered.clear()
         self._acked.clear()
         self._clear_silences()
+        self._rearm.clear()
         self._clear_holds()
         self._log(f"Mode « {mode.get('name', '')} » activé")
         note, _cfg = self._react("enter", None, None, mode, "")
@@ -572,6 +585,25 @@ class SentinelEngine:
         self._on_since.pop(ent_id, None)
         if ent_id in self._hold and not self._raw_on(ent):
             self._release_hold(ent_id)     # présence maintenue : la personne est partie
+        if ent.get("type") == "motion":
+            # on remet la zone à zéro : plus de présence maintenue pour ses détecteurs,
+            # et la détection en cours n'est pas reprise à la fin de la pause
+            room = room_of(self.config, ent)
+            group = [ent]
+            if room:
+                group += [
+                    o for o in self.config["ents"]
+                    if o.get("id") != ent_id and o.get("type") == "motion"
+                    and (room_of(self.config, o) or {}).get("id") == room.get("id")
+                ]
+            for o in group:
+                if self._raw_on(o):
+                    self._rearm.add(o["id"])
+            for o in group:
+                if o["id"] != ent_id:
+                    self._triggered.pop(o["id"], None)
+                    self._cancel_timers(o["id"])
+                self._release_hold(o["id"])
         seconds = self._ack_delay()
         self._start_silence(ent_id, seconds)
         zone = (room_of(self.config, ent) or {}).get("name", "")

@@ -428,6 +428,37 @@ def test_acknowledge_triggered_entity_clears_status_only_for_it():
     assert engine.async_acknowledge("inconnu") is False
 
 
+def test_acknowledged_motion_waits_for_a_new_detection():
+    hass, engine = _motion_house()
+    hass.set("binary_sensor.m1", "on")
+    assert engine.snapshot()["ents"]["m1"]["pending_kind"] == "entry"
+    assert engine.async_acknowledge("binary_sensor.m1") is True
+    # fin de la pause alors que le capteur est toujours « on » : on ne reprend pas
+    timer = [t for t in _Timers.calls if not t["cancelled"] and abs(t["delay"] - 60) < 1][-1]
+    timer["action"](None)
+    snap = engine.snapshot()["ents"]["m1"]
+    assert "pending" not in snap and snap["level"] == "" and snap["held"] is False
+    # le capteur retombe puis détecte de nouveau : nouvelle détection, le délai repart
+    hass.set("binary_sensor.m1", "off")
+    hass.set("binary_sensor.m1", "on")
+    assert engine.snapshot()["ents"]["m1"]["pending_kind"] == "entry"
+
+
+def test_acknowledge_motion_resets_zone_presence():
+    hass, engine = _motion_house()
+    hass.states_map["binary_sensor.m4"] = _State("off")
+    engine.config["ents"].append({"id": "m4", "name": "Mvt salon 2", "type": "motion",
+                                  "floor": "f0", "entity": "binary_sensor.m4", "x": 3, "z": 3})
+    engine._track_states()
+    hass.set("binary_sensor.m4", "on")
+    hass.set("binary_sensor.m4", "off")
+    assert engine.snapshot()["ents"]["m4"]["held"] is True        # présence maintenue
+    hass.set("binary_sensor.m1", "on")                             # autre détecteur du salon
+    assert engine.async_acknowledge("binary_sensor.m1") is True
+    assert engine.snapshot()["ents"]["m4"]["held"] is False        # zone remise à zéro
+    assert engine.snapshot()["ents"]["m4"]["on"] is False
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for fn in tests:
