@@ -2304,7 +2304,7 @@ function renderModes(){
   var m=modeById(ui.modeSel),tab=ui.modeTab||'levels';
   var list='<nav class="mlist" aria-label="Modes">'+model.modes.map(function(x){
     var act=x.id===cm.id;
-    return '<button class="mitem'+(x.id===m.id?' sel':'')+'" data-msel="'+x.id+'"><i style="background:'+safeColor(x.color)+'"></i><span><b>'+esc(x.name)+'</b><small>'+esc(x.desc||'')+'</small></span>'+(act?'<em class="tag act">Actif</em>':'')+'</button>';
+    return '<button class="mitem'+(x.id===m.id?' sel':'')+'" data-msel="'+x.id+'"><i style="background:'+safeColor(x.color)+'"></i><span><b>'+esc(x.name)+'</b><small>'+esc(x.desc||'')+'</small></span>'+(act?'<em class="tag act">Actif</em>':'')+(x.needCode||x.needConfirm?'<span class="tag" title="Sécurité du changement de mode">🔒 '+(x.needCode?'Code':'')+(x.needCode&&x.needConfirm?' + ':'')+(x.needConfirm?'Validation':'')+'</span>':'')+'</button>';
   }).join('')+'<button class="btn" data-cact="addMode">+ Nouveau mode</button></nav>';
   var tabs=[['levels','Niveaux'],['notif','Notifications'],['actions','Actions'],['settings','Réglages'],['compare','Comparer les modes']];
   var d='<div class="mdhead"><div class="mdtitle"><i style="background:'+safeColor(m.color)+'"></i><h2>'+esc(m.name)+'</h2></div>'+

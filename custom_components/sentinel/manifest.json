@@ -1,7 +1,7 @@
 {
   "domain": "sentinel",
   "name": "Sentinel",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "documentation": "https://github.com/ZephyrOff/Sentinel",
   "issue_tracker": "https://github.com/ZephyrOff/Sentinel/issues",
   "codeowners": ["@ZephyrOff"],

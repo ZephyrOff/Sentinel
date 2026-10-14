@@ -33,7 +33,9 @@ class SentinelPanel extends HTMLElement {
     this._bar.append(menu, title);
 
     this._frame = document.createElement("iframe");
-    this._frame.src = "/sentinel_static/index.html";
+    // le paramètre de version évite que le navigateur serve une ancienne page depuis son cache
+    const v = this._ver || String(Math.floor(Date.now() / 600000));
+    this._frame.src = "/sentinel_static/index.html?v=" + encodeURIComponent(v);
     this._frame.title = "Sentinel";
     this._frame.style.cssText = "border:0;width:100%;flex:1;min-height:0;background:transparent;";
     this._frame.addEventListener("load", () => this._push());
@@ -54,7 +56,9 @@ class SentinelPanel extends HTMLElement {
 
   // Propriétés fournies par Home Assistant, non utilisées ici.
   set route(_v) {}
-  set panel(_v) {}
+  set panel(p) {
+    this._ver = p && p.config && p.config.v;
+  }
 
   _applyNarrow() {
     if (this._bar) this._bar.style.display = this._narrow ? "flex" : "none";

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "sentinel"
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 
 # Fichiers statiques du panneau (index.html, sentinel-panel.js, logo, three.js)
 URL_BASE = "/sentinel_static"

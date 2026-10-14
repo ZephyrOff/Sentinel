@@ -58,7 +58,7 @@ async def _async_register_frontend(hass: HomeAssistant) -> None:
         sidebar_title="Sentinel",
         sidebar_icon="mdi:shield-home",
         require_admin=True,
-        config={},
+        config={"v": VERSION},
     )
     # cartes Lovelace (statut, mode, digicode, zones, acquittement, chips, plan, journal)
     frontend.add_extra_js_url(hass, f"{URL_BASE}/sentinel-cards.js?v={VERSION}")
