@@ -25,6 +25,7 @@ from .const import (
     SIGNAL_UPDATE,
 )
 from .logic import (
+    ARM_KINDS,
     new_code_record,
     verify_code,
     STATUS_RANK,
@@ -562,6 +563,37 @@ class SentinelEngine:
     # ------------------------------------------------------------------ #
     # Actions publiques (services, entités, websocket)
     # ------------------------------------------------------------------ #
+    # -- alarm_control_panel : état « à la Alarmo » dérivé des modes --
+    def armed_kind(self, mode: dict[str, Any]) -> str:
+        kind = mode.get("armedAs")
+        return kind if kind in ARM_KINDS else "armed_custom_bypass"
+
+    def mode_for_kind(self, kind: str) -> dict[str, Any] | None:
+        return next((m for m in self.config["modes"] if self.armed_kind(m) == kind), None)
+
+    def is_arming(self) -> bool:
+        return bool(self._grace_until and dt_util.utcnow() < self._grace_until)
+
+    def is_entry_pending(self) -> bool:
+        return any(p.get("kind") == "entry" for p in self._pending.values())
+
+    def panel_state(self) -> str:
+        """disarmed, arming, armed_*, pending (délai d'entrée) ou triggered."""
+        if self.counts()["critical"] > 0:
+            return "triggered"
+        if self.is_entry_pending():
+            return "pending"
+        if self.is_arming():
+            return "arming"
+        return self.armed_kind(current_mode(self.config))
+
+    def open_entities(self) -> list[dict[str, Any]]:
+        return [e for e in self.config["ents"] if self._raw_on(e)]
+
+    def pending_entry_until(self) -> str | None:
+        times = [p["until"] for p in self._pending.values() if p.get("kind") == "entry"]
+        return min(times).isoformat() if times else None
+
     # -- code d'armement --
     def code_is_set(self) -> bool:
         return bool((self.config.get("cfg") or {}).get("code_hash"))

@@ -39,6 +39,25 @@
     for (var id in st) { var a = st[id].attributes; if (a && a.sentinel_key === key) return st[id]; }
     return null;
   }
+  /* entité qui porte le mode : alarm_control_panel (clé « panel »), sinon l'ancien select */
+  function modeEntity(hass) { return find(hass, "panel") || find(hass, "mode"); }
+  function curName(e) { return (e.attributes.sentinel_key === "panel" ? e.attributes.arm_mode : e.state) || e.state; }
+  var ARM_SERVICE = {
+    disarmed: "alarm_disarm", armed_home: "alarm_arm_home", armed_away: "alarm_arm_away",
+    armed_night: "alarm_arm_night", armed_vacation: "alarm_arm_vacation", armed_custom_bypass: "alarm_arm_custom_bypass"
+  };
+  /* active un mode : par l'alarme quand c'est possible, sinon par le service Sentinel */
+  function setMode(card, m, code) {
+    var e = modeEntity(card._hass);
+    if (e && e.attributes.sentinel_key === "panel" && m.via_panel !== false && ARM_SERVICE[m.armed_as]) {
+      var data = { entity_id: e.entity_id };
+      if (code) data.code = code;
+      return card.call("alarm_control_panel", ARM_SERVICE[m.armed_as], data);
+    }
+    var d = { mode: m.id };
+    if (code) d.code = code;
+    return card.call("sentinel", "set_mode", d);
+  }
   function zoneStates(hass) {
     var out = [], st = hass.states;
     for (var id in st) {
@@ -263,7 +282,7 @@
   }
   /* résultat d'une demande de validation : affiché une fois, quand il change */
   function watchResult(card) {
-    var m = find(card._hass, "mode"); if (!m) return;
+    var m = modeEntity(card._hass); if (!m) return;
     var lr = m.attributes.last_request;
     if (!lr) return;
     if (card._seenSeq === undefined) { card._seenSeq = lr.seq; return; }
@@ -294,10 +313,10 @@
   /* retourne true si l'action a été traitée */
   function modeAct(card, a, d) {
     if (a === "mode") {
-      var mode = find(card._hass, "mode"), m = (mode.attributes.modes || []).filter(function (x) { return x.id === d.id; })[0];
+      var mode = modeEntity(card._hass), m = (mode.attributes.modes || []).filter(function (x) { return x.id === d.id; })[0];
       if (!m || m.id === mode.attributes.mode_id) return true;
       if (m.need_code) { card._asking = m.id; card._kp = null; card._render(); return true; }
-      card.call("sentinel", "set_mode", { mode: m.id }).then(function () {
+      setMode(card, m).then(function () {
         if (m.need_confirm) flash(card, "Validation envoyée sur ton appareil");
       }).catch(function (e) { flash(card, (e && e.message) || "Action refusée"); });
       return true;
@@ -305,8 +324,8 @@
     if (card._asking) {
       card._cancel = function () { card._asking = null; card._kp = null; };
       keypadAct(card, a, d, function (code) {
-        var asked = visibleModes(card, find(card._hass, "mode")).filter(function (x) { return x.id === card._asking; })[0] || {};
-        return card.call("sentinel", "set_mode", { mode: card._asking, code: code }).then(function () {
+        var asked = visibleModes(card, modeEntity(card._hass)).filter(function (x) { return x.id === card._asking; })[0] || {};
+        return setMode(card, asked, code).then(function () {
           card._asking = null; card._kp = null;
           if (asked.need_confirm) flash(card, "Code accepté · validation envoyée sur ton appareil");
         });
@@ -320,12 +339,12 @@
   class StatusCard extends SentinelCard {
     constructor() { super(); this._watch = true; }
     _ticks() {
-      var m = find(this._hass, "mode"); if (!m) return false;
+      var m = modeEntity(this._hass); if (!m) return false;
       var p = pendingLeft(m);
       return !!(secondsLeft(m.attributes.grace_until) || (p && p.left > 0));
     }
     body() {
-      var h = this._hass, mode = find(h, "mode"), st = find(h, "status");
+      var h = this._hass, mode = modeEntity(h), st = find(h, "status");
       if (!mode || !st) return '<ha-card><div class="empty">Sentinel introuvable</div></ha-card>';
       if (this._asking) return codeSheet(this, mode);
       var level = st.state, grace = secondsLeft(mode.attributes.grace_until);
@@ -348,7 +367,7 @@
       var bar = (this._cfg.show_modes ? modeBar(this, mode, "tight") : "") + noteLine(this, mode);
       return '<ha-card class="' + (active === "ok" ? "" : "tint") + '" style="--c:' + colorOf(active) + '"><button class="row" data-a="more" style="width:100%">' +
         '<div class="ring' + (active !== "ok" ? " live" : "") + '" style="--c:' + colorOf(active) + '"><ha-icon icon="' + icon + '"></ha-icon></div>' +
-        '<div class="sp"><div class="t big">' + esc(mode.state) + '</div><div class="s' + (subCol ? " c" : "") + '" style="--c:' + colorOf(subCol) + '">' + esc(sub) + "</div></div></button>" + stats + bar + "</ha-card>";
+        '<div class="sp"><div class="t big">' + esc(curName(mode)) + '</div><div class="s' + (subCol ? " c" : "") + '" style="--c:' + colorOf(subCol) + '">' + esc(sub) + "</div></div></button>" + stats + bar + "</ha-card>";
     }
     act(a, d) {
       if (a === "more") { var m = find(this._hass, "status"); if (m) moreInfo(this, m.entity_id); return; }
@@ -364,12 +383,12 @@
   class ModeCard extends SentinelCard {
     constructor() { super(); this._watch = true; }
     _ticks() {
-      var m = find(this._hass, "mode"); if (!m) return false;
+      var m = modeEntity(this._hass); if (!m) return false;
       var p = pendingLeft(m);
       return !!(secondsLeft(m.attributes.grace_until) || (p && p.left > 0));
     }
     body() {
-      var mode = find(this._hass, "mode");
+      var mode = modeEntity(this._hass);
       if (!mode) return '<ha-card><div class="empty">Sentinel introuvable</div></ha-card>';
       if (this._asking) return codeSheet(this, mode);
       var A = mode.attributes, grace = secondsLeft(A.grace_until), cur = A.mode_id;
@@ -387,11 +406,11 @@
   class KeypadCard extends SentinelCard {
     constructor() { super(); this._watch = true; }
     _ticks() {
-      var m = find(this._hass, "mode"); var p = m && pendingLeft(m);
+      var m = modeEntity(this._hass); var p = m && pendingLeft(m);
       return !!(p && p.left > 0);
     }
     body() {
-      var mode = find(this._hass, "mode");
+      var mode = modeEntity(this._hass);
       if (!mode) return '<ha-card><div class="empty">Sentinel introuvable</div></ha-card>';
       var modes = mode.attributes.modes || [], want = this._cfg.modes;
       if (want && want.length) modes = modes.filter(function (m) { return want.indexOf(m.name) >= 0 || want.indexOf(m.id) >= 0; });
@@ -417,10 +436,8 @@
       var self = this;
       if (a === "target") { this._target = d.id; this._kp = null; this._render(); return; }
       keypadAct(this, a, d, function (code) {
-        var data = { mode: self._target };
-        if (code) data.code = code;
-        var tm = (find(self._hass, "mode").attributes.modes || []).filter(function (m) { return m.id === self._target; })[0] || {};
-        return self.call("sentinel", "set_mode", data).then(function () {
+        var tm = (modeEntity(self._hass).attributes.modes || []).filter(function (m) { return m.id === self._target; })[0] || {};
+        return setMode(self, tm, code).then(function () {
           if (tm.need_confirm) flash(self, "Validation envoyée sur ton appareil");
         });
       });
@@ -490,9 +507,9 @@
 
   /* ---------- chips ---------- */
   class ChipsCard extends SentinelCard {
-    _ticks() { var m = find(this._hass, "mode"); return !!(m && secondsLeft(m.attributes.grace_until)); }
+    _ticks() { var m = modeEntity(this._hass); return !!(m && secondsLeft(m.attributes.grace_until)); }
     body() {
-      var h = this._hass, mode = find(h, "mode"), st = find(h, "status"), act = find(h, "active");
+      var h = this._hass, mode = modeEntity(h), st = find(h, "status"), act = find(h, "active");
       if (!mode || !st) return '<ha-card><div class="empty">Sentinel introuvable</div></ha-card>';
       var which = this._cfg.chips || ["mode", "status", "zones", "ack"], out = [];
       var hideEmpty = this._cfg.hide_empty !== false;
@@ -503,7 +520,7 @@
       which.forEach(function (w) {
         if (w === "mode") {
           out.push('<button class="chip" data-a="more" data-e="' + esc(mode.entity_id) + '" style="--c:' + esc((modes[idx] || {}).color || "var(--s-blue)") + '"><span class="ic"><ha-icon icon="' + modeIcon(modes[idx] || {}, idx) + '"></ha-icon></span>' +
-            esc(mode.state) + (grace ? " · " + grace + " s" : "") + "</button>");
+            esc(curName(mode)) + (grace ? " · " + grace + " s" : "") + "</button>");
         }
         if (w === "status") {
           var lv = st.state, n = todo.length;

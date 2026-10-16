@@ -46,6 +46,8 @@ class SentinelSensor(SentinelEntity, SensorEntity):
     @property
     def native_value(self) -> str | int | None:
         key, counts = self._key, self.engine.counts()
+        if key == "open_sensors":
+            return len(self.engine.open_entities())
         if key == "active":
             return len([i for i in self.engine.active_items() if i["status"] != "acked"])
         if key == "journal":
@@ -67,6 +69,11 @@ class SentinelSensor(SentinelEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         key, counts = self._key, self.engine.counts()
         base: dict[str, Any] = {"sentinel_key": key}
+        if key == "open_sensors":
+            return {**base, "sensors": [
+                {"name": e.get("name", ""), "entity_id": e.get("entity", ""), "type": e.get("type", "")}
+                for e in self.engine.open_entities()
+            ]}
         if key == "active":
             return {**base, "items": self.engine.active_items()}
         if key == "journal":

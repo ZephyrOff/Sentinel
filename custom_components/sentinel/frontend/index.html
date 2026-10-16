@@ -2055,6 +2055,13 @@ function haItems(){
   it.push({key:'alarm',domain:'binary_sensor',suffix:'alarm',label:'Alarme',state:c.critical?'on':'off',attrs:{device_class:'safety'},desc:'Actif dès qu\'une entité est en critical.'});
   it.push({key:'last_trigger',domain:'sensor',suffix:'last_trigger',label:'Dernier déclenchement',state:lastTrigger?lastTrigger.name:'—',
     attrs:lastTrigger?{level:lastTrigger.level,zone:lastTrigger.zone,time:lastTrigger.time}:{},desc:'Dernière entité passée en info, warning ou critical.'});
+  it.push({key:'panel',domain:'alarm_control_panel',suffix:'alarm',label:'Alarme (alarm_control_panel)',state:c.status==='critical'?'triggered':m.armedAs==='disarmed'?'disarmed':(m.armedAs||'armed_custom_bypass'),
+    attrs:{arm_mode:m.name,armed_as:m.armedAs||'armed_custom_bypass'},desc:'Comme Alarmo : désarmée, armée (à domicile, absent, nuit, vacances), en armement, en attente (délai d’entrée) ou déclenchée. Armer et désarmer avec un code si le mode l’exige.'});
+  it.push({key:'arming',domain:'binary_sensor',suffix:'arming',label:'Armement en cours',state:graceLeft()>0?'on':'off',attrs:{},desc:'Actif pendant le délai de sortie.'});
+  it.push({key:'pending',domain:'binary_sensor',suffix:'pending',label:'Délai d’entrée en cours',state:model.ents.some(function(e){return pendingOf(e)&&pendingOf(e).kind==='entry'})?'on':'off',attrs:{},desc:'Actif quand une détection attend la fin du délai d’entrée.'});
+  it.push({key:'open_sensors',domain:'sensor',suffix:'open_sensors',label:'Capteurs ouverts',state:model.ents.filter(function(e){return e.on}).length,attrs:{},desc:'Entités actuellement actives (ouvertes ou détectant), avec leur liste en attribut.'});
+  it.push({key:'active',domain:'sensor',suffix:'active',label:'À traiter',state:model.ents.filter(function(e){return pendingOf(e)||sev(e)!=='idle'}).length,attrs:{},desc:'Entités en détection ou déclenchées, avec compte à rebours (utilisé par les cartes).'});
+  it.push({key:'journal',domain:'sensor',suffix:'journal',label:'Journal',state:journal[0]?journal[0].text:'—',attrs:{},desc:'Derniers évènements (utilisé par la carte journal).'});
   model.rooms.forEach(function(r){
     var es=model.ents.filter(function(e){return e.on&&roomOf(e)===r}),w='ok',n=0;
     es.forEach(function(e){var l=levelInfo(e).level;if(l==='off')return;n++;if(w==='ok'||RANK[LV2SEV[l]]>RANK[LV2SEV[w]])w=l});
@@ -2337,6 +2344,8 @@ function settingsTab(m){
     '<label class="wide">Description<input'+a+' data-f="desc" value="'+esc(m.desc||'')+'"></label>'+
     '<label>Délai d\'entrée (s)<input type="number" min="0"'+a+' data-f="entryDelay" value="'+(m.entryDelay||0)+'"></label>'+
     '<label>Délai de sortie (s)<input type="number" min="0"'+a+' data-f="exitDelay" value="'+(m.exitDelay||0)+'"></label>'+
+    '<label class="wide">Type d’armement dans Home Assistant (entité alarm_control_panel)<select'+a+' data-f="armedAs">'+[['disarmed','Désarmé'],['armed_home','À domicile'],['armed_away','Absent'],['armed_night','Nuit'],['armed_vacation','Vacances'],['armed_custom_bypass','Personnalisé']].map(function(o){return '<option value="'+o[0]+'"'+((m.armedAs||'armed_custom_bypass')===o[0]?' selected':'')+'>'+o[1]+'</option>'}).join('')+'</select></label>'+
+    '<p class="muted wide" style="margin:0">L’action « armer à domicile / absent / nuit… » ou « désarmer » de l’alarme active le premier mode portant ce type.</p>'+
     '<fieldset class="wide secure"><legend>Sécurité du changement de mode</legend>'+
       '<label class="chk"><input type="checkbox"'+a+' data-f="needCode"'+(m.needCode?' checked':'')+'> Demander un code pour activer ce mode</label>'+
       (m.needCode?'<div class="row" style="gap:8px;flex-wrap:wrap"><label style="flex:1;min-width:150px">Code de ce mode (4 à 12 chiffres)<input id="fModeCode" type="password" inputmode="numeric" autocomplete="new-password" placeholder="'+(m.code_set?'•••• (défini)':((model.cfg&&model.cfg.code_set)?'Code par défaut utilisé':'Aucun code'))+'"></label>'+

@@ -42,6 +42,26 @@ ON_STATES = frozenset(
 # Les entry delay ne s'appliquent jamais à ces types (sécurité des personnes).
 SAFETY_TYPES = frozenset({"smoke", "leak"})
 
+# Types d'armement Home Assistant (alarm_control_panel) auxquels un mode peut correspondre.
+ARM_KINDS = ("disarmed", "armed_home", "armed_away", "armed_night", "armed_vacation", "armed_custom_bypass")
+DEFAULT_ARM = {"m_off": "disarmed", "m_home": "armed_home", "m_away": "armed_away", "m_night": "armed_night"}
+
+DEFAULT_ARM_NAMES = {"desarme": "disarmed", "presence": "armed_home", "maison": "armed_home",
+                     "absence": "armed_away", "absent": "armed_away", "nuit": "armed_night",
+                     "vacances": "armed_vacation"}
+
+
+def infer_arm(mode: dict[str, Any]) -> str:
+    """Type d'armement par défaut d'un mode, d'après son identifiant puis son nom."""
+    if mode.get("id") in DEFAULT_ARM:
+        return DEFAULT_ARM[mode["id"]]
+    import unicodedata
+
+    name = unicodedata.normalize("NFD", str(mode.get("name", "")))
+    name = "".join(c for c in name if unicodedata.category(c) != "Mn").lower().strip()
+    return DEFAULT_ARM_NAMES.get(name, "armed_custom_bypass")
+
+
 # Évènements d'un mode auxquels on peut rattacher une notification et des actions.
 # enter : le mode vient d'être activé ; clear : une entité redevient normale.
 EVENTS = ("enter", "info", "warning", "critical", "clear")
@@ -168,6 +188,8 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     for mode in cfg["modes"]:
         mode.setdefault("def", "off")
         mode.setdefault("ackDelay", 60)
+        if mode.get("armedAs") not in ARM_KINDS:
+            mode["armedAs"] = infer_arm(mode)
         mode["needCode"] = bool(mode.get("needCode"))
         mode["needConfirm"] = bool(mode.get("needConfirm"))
         mode["confirmTarget"] = str(mode.get("confirmTarget") or "").strip()
@@ -479,6 +501,10 @@ def exposed_items(config: dict[str, Any]) -> list[dict[str, Any]]:
         ("info_count", "sensor", "info_count", "Info count", "mdi:information"),
         ("alarm", "binary_sensor", "alarm", "Alarm", "mdi:alarm-light"),
         ("last_trigger", "sensor", "last_trigger", "Last trigger", "mdi:history"),
+        ("panel", "alarm_control_panel", "alarm", "Alarm panel", "mdi:shield-home"),
+        ("arming", "binary_sensor", "arming", "Arming", "mdi:timer-sand"),
+        ("pending", "binary_sensor", "pending", "Pending", "mdi:timer-alert"),
+        ("open_sensors", "sensor", "open_sensors", "Open sensors", "mdi:door-open"),
         ("active", "sensor", "active", "Active", "mdi:bell-ring"),
         ("journal", "sensor", "journal", "Journal", "mdi:text-box-outline"),
     ]

@@ -603,6 +603,36 @@ def test_code_and_confirmation_together():
     assert asyncio.run(engine.async_request_mode("away", "4321")) == "pending"
 
 
+def test_alarm_panel_states_like_alarmo():
+    hass, engine = _build()
+    assert engine.panel_state() == "disarmed"                      # mode « off » (Désarmé) par défaut
+    engine.config["modes"][1]["armedAs"] = "armed_away"
+    engine.config["modes"][1]["exitDelay"] = 30
+    engine.async_set_mode("away")
+    assert engine.panel_state() == "arming"                        # délai de sortie
+    engine._grace_until = None
+    assert engine.panel_state() == "armed_away"
+    hass.set("binary_sensor.fenetre", "on")                        # délai d'entrée (30 s sur critical)
+    assert engine.panel_state() == "pending" and engine.is_entry_pending()
+    hass.set("binary_sensor.fumee", "on")                          # critical immédiat
+    assert engine.panel_state() == "triggered"
+    assert engine.mode_for_kind("armed_away")["id"] == "away"
+    assert engine.mode_for_kind("armed_vacation") is None
+    assert [e["id"] for e in engine.open_entities()] == ["e1", "e2"]
+
+
+def test_default_arm_mapping_for_standard_modes():
+    from sentinel import logic as lg
+    cfg = lg.normalize_config(lg.default_config())
+    kinds = {m["id"]: m["armedAs"] for m in cfg["modes"]}
+    assert kinds["m_off"] == "disarmed" and kinds["m_away"] == "armed_away" and kinds["m_night"] == "armed_night"
+    custom = lg.normalize_config({"modes": [{"id": "x", "name": "Atelier"}, {"id": "y", "name": "Vacances"}]})
+    assert custom["modes"][0]["armedAs"] == "armed_custom_bypass"
+    assert custom["modes"][1]["armedAs"] == "armed_vacation"
+    keys = {i["key"] for i in lg.exposed_items(cfg)}
+    assert {"panel", "arming", "pending", "open_sensors"} <= keys
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for fn in tests:

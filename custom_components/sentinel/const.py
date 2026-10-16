@@ -11,7 +11,7 @@ PANEL_URL_PATH = "sentinel"
 STORAGE_KEY = "sentinel.config"
 STORAGE_VERSION = 1
 
-PLATFORMS = ["select", "sensor", "binary_sensor"]
+PLATFORMS = ["select", "sensor", "binary_sensor", "alarm_control_panel"]
 
 SIGNAL_UPDATE = "sentinel_update_{}"
 

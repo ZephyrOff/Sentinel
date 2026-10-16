@@ -107,11 +107,34 @@ automation:
 - Pas d'actions sortantes (sirène, lumières) : utilise les événements et le statut dans tes automatisations.
 - Le panneau utilise des modules WebGL : un navigateur récent est nécessaire.
 
+## Alarme « à la Alarmo »
+
+Sentinel expose une entité **`alarm_control_panel.sentinel_alarm`**, en plus du sélecteur de mode :
+
+| État | Quand |
+|---|---|
+| `disarmed` | le mode actif est de type « Désarmé » |
+| `armed_home`, `armed_away`, `armed_night`, `armed_vacation`, `armed_custom_bypass` | le mode actif a ce type d'armement |
+| `arming` | délai de sortie en cours |
+| `pending` | une détection attend la fin du délai d'entrée |
+| `triggered` | au moins une entité est en Critical |
+
+Chaque mode a un **type d'armement** (*Modes › Réglages*) : les actions « armer à domicile / absent / nuit /
+vacances / personnalisé » et « désarmer » de la carte alarme (ou des services `alarm_control_panel.*`)
+activent le premier mode portant ce type. Le **code** et la **validation sur appareil** de chaque mode
+s'appliquent. Attributs : `arm_mode`, `triggered_by`, `open_sensors`, `exit_delay_until`, `entry_delay_until`.
+
+Entités complémentaires : `binary_sensor.sentinel_arming` (délai de sortie), `binary_sensor.sentinel_pending`
+(délai d'entrée), `sensor.sentinel_open_sensors` (capteurs ouverts, liste en attribut).
+
 ## Cartes Lovelace (style iOS)
 
 Les cartes sont chargées automatiquement avec l'intégration (aucune ressource à ajouter) et reprennent les
 variables du thème Home Assistant : elles s'accordent au thème iOS clair ou sombre. Les entités Sentinel
 sont retrouvées toutes seules.
+Les cartes lisent et pilotent l'entité `alarm_control_panel.sentinel_alarm` (services `alarm_arm_*` et
+`alarm_disarm`, avec le code si le mode l'exige) ; un mode qui n'est pas le premier de son type d'armement est
+activé par `sentinel.set_mode`. Sans l'entité alarme, elles retombent sur `select.sentinel_mode`.
 
 | Carte | Contenu |
 |---|---|
